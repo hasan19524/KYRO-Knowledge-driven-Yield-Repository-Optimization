@@ -21,6 +21,9 @@ export default function AppShell() {
   }, []);
 
   useEffect(() => {
+    // localStorage is browser-only; hydrate after mount so the first client
+    // render matches the server-rendered empty state (no hydration mismatch).
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setChats(getAllChats());
   }, []);
 

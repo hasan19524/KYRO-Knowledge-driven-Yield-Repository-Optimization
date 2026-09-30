@@ -18,6 +18,19 @@ export default function Topbar({ onToggleSidebar }: TopbarProps) {
       className="flex items-center justify-end px-6 py-3"
     >
       <div className="flex items-center gap-3">
+        <button
+          type="button"
+          onClick={onToggleSidebar}
+          className="flex h-8 w-8 items-center justify-center transition-colors"
+          style={{ color: "#8f96a3" }}
+          onMouseEnter={(e) => (e.currentTarget.style.color = "#f5f5f5")}
+          onMouseLeave={(e) => (e.currentTarget.style.color = "#8f96a3")}
+          aria-label="Toggle sidebar"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="h-5 w-5">
+            <path strokeLinecap="round" d="M4 6h16M4 12h16M4 18h16" />
+          </svg>
+        </button>
         <a
           href="https://github.com"
           target="_blank"
