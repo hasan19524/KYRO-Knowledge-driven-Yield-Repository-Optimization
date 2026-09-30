@@ -1,0 +1,8 @@
+{
+  "venvPath": "backend",
+  "venv": ".venv",
+  "pythonVersion": "3.13",
+  "include": ["backend/app", "backend/tests", "backend/alembic"],
+  "reportMissingImports": "error",
+  "reportUnusedImport": "warning"
+}

@@ -32,6 +32,19 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+!.env.example
+
+# python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.ruff_cache/
+.pytest_cache/
+*.log
+
+# docker
+*.sql.gz
 
 # vercel
 .vercel
@@ -53,3 +66,8 @@ backend/__pycache__
 backend/app/__pycache__
 backend/.env
 *.pyc
+
+# kafka verification tooling (local only)
+kafka/verify/.venv/
+kafka/verify/kafka-verify-state.json
+kafka/verify/__pycache__/

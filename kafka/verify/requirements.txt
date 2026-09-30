@@ -1,0 +1,3 @@
+# Verification-only dependency for the KYRO Kafka ingestion-worker demo.
+# Not part of the application runtime.
+confluent-kafka>=2.6.0

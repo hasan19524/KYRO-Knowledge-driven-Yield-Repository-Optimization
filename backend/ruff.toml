@@ -1,0 +1,33 @@
+# Ruff configuration for the KYRO backend (PHASE 16 verification).
+#
+# Rule selection is explicit so lint results do not change when ruff's
+# built-in default rule set changes between versions.
+
+line-length = 88
+target-version = "py313"
+
+[lint]
+select = [
+    "E4",    # pycodestyle: indentation / import layout (E401, E402)
+    "E7",    # pycodestyle: statement errors (E711, E722, ...)
+    "E9",    # pycodestyle: runtime errors (E901, E999)
+    "F",     # pyflakes: unused imports/vars, undefined names
+    "I",     # import sorting
+    "UP",    # pyupgrade: modern Python syntax
+    "B",     # bugbear: likely bugs
+    "SIM",   # simplify: idiomatic rewrites
+    "C4",    # comprehensions
+    "PERF",  # performance anti-patterns
+    "RUF",   # ruff-specific rules
+]
+ignore = [
+    # FastAPI's documented dependency-injection idiom is a call in an
+    # argument default (Depends(...)/Query(...)); B008 does not model it.
+    "B008",
+]
+
+[lint.per-file-ignores]
+# Test helpers intentionally share fixtures/helpers across modules.
+"tests/*" = ["B006"]
+# Alembic migration files are generated artifacts.
+"alembic/versions/*" = ["UP007", "UP035"]

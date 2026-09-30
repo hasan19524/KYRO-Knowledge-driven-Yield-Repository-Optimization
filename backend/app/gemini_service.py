@@ -4,8 +4,10 @@ from app.config import GEMINI_API_KEY
 
 
 def _get_model():
-    genai.configure(api_key=GEMINI_API_KEY)
-    return genai.GenerativeModel("gemini-2.0-flash")
+    genai.configure(api_key=GEMINI_API_KEY)  # pyright: ignore[reportPrivateImportUsage]
+    return genai.GenerativeModel(  # pyright: ignore[reportPrivateImportUsage]
+        "gemini-2.0-flash"
+    )
 
 
 def chat(message: str) -> str:
