@@ -77,6 +77,10 @@ class ChromaIndexer:
             )
         return self._collection
 
+    def ping(self) -> None:
+        """Readiness probe. Raises when the Chroma server is unreachable."""
+        self._client.heartbeat()
+
     def index_event(self, items: list[IndexItem]) -> int:
         """Upsert semantic chunks for one event's changes. Idempotent."""
         if not items:

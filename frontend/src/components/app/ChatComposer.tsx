@@ -6,6 +6,7 @@ import { Paperclip, Folder, ChevronDown, ArrowUp } from "lucide-react";
 interface ChatComposerProps {
   onSend: (content: string) => void;
   initialValue?: string;
+  repositoryLabel?: string | null;
 }
 
 function SparkleSmall({ className, style }: { className?: string; style?: React.CSSProperties }) {
@@ -19,7 +20,11 @@ function SparkleSmall({ className, style }: { className?: string; style?: React.
   );
 }
 
-export default function ChatComposer({ onSend, initialValue = "" }: ChatComposerProps) {
+export default function ChatComposer({
+  onSend,
+  initialValue = "",
+  repositoryLabel,
+}: ChatComposerProps) {
   const [value, setValue] = useState(initialValue);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -114,7 +119,9 @@ export default function ChatComposer({ onSend, initialValue = "" }: ChatComposer
             type="button"
           >
             <Folder className="h-3.5 w-3.5" style={{ color: "#626977" }} />
-            <span>Repository</span>
+            <span className="max-w-[180px] truncate">
+              {repositoryLabel ?? "Repository"}
+            </span>
             <ChevronDown className="h-3 w-3" style={{ color: "#626977" }} />
           </button>
 

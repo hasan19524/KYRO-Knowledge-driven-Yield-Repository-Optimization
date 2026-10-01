@@ -2,11 +2,11 @@ import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from fastapi.responses import JSONResponse
+from sqlalchemy import text
 
-from app import gemini_service
 from app.api.repositories import router as repositories_router
 from app.state import AppState, build_state
 
@@ -16,6 +16,29 @@ logging.basicConfig(
 )
 
 from app import config  # noqa: E402  (after logging config)
+
+log = logging.getLogger("kyro.main")
+
+
+def _check_postgres(state: AppState) -> str:
+    try:
+        with state.session_factory() as session:
+            session.execute(text("SELECT 1"))
+        return "ok"
+    except Exception:
+        return "error"
+
+
+def _check_chroma(state: AppState) -> str:
+    try:
+        ping = getattr(state.indexer, "ping", None)
+        if callable(ping):
+            ping()
+        else:
+            state.indexer.count()
+        return "ok"
+    except Exception:
+        return "error"
 
 
 def create_app(state: AppState | None = None) -> FastAPI:
@@ -51,6 +74,12 @@ def create_app(state: AppState | None = None) -> FastAPI:
 
     app = FastAPI(title="KYRO Backend", version="0.1.0", lifespan=lifespan)
 
+    if not config.KYRO_API_KEY:
+        log.warning(
+            "KYRO_API_KEY is not set; mutation/query endpoints are "
+            "unauthenticated (development mode only)"
+        )
+
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["http://localhost:3000"],
@@ -59,28 +88,23 @@ def create_app(state: AppState | None = None) -> FastAPI:
     )
 
     @app.get("/health")
-    def health_check():
-        return {"status": "ok"}
-
-    class ChatRequest(BaseModel):
-        message: str
-
-    class ChatResponse(BaseModel):
-        response: str
-
-    @app.post("/api/chat", response_model=ChatResponse)
-    def chat_endpoint(request: ChatRequest):
-        if not request.message.strip():
-            raise HTTPException(status_code=400, detail="Message cannot be empty")
-
-        try:
-            reply = gemini_service.chat(request.message)
-        except Exception as exc:
-            raise HTTPException(
-                status_code=502, detail=f"Gemini API error: {exc}"
-            ) from exc
-
-        return ChatResponse(response=reply)
+    def health_check(request: Request) -> JSONResponse:
+        """Honest readiness: 503 until every query-path dependency answers."""
+        state: AppState | None = getattr(request.app.state, "kyro", None)
+        if state is None:
+            return JSONResponse(
+                status_code=503,
+                content={"status": "starting", "checks": {}},
+            )
+        checks = {
+            "postgres": _check_postgres(state),
+            "chroma": _check_chroma(state),
+        }
+        ready = all(v == "ok" for v in checks.values())
+        return JSONResponse(
+            status_code=200 if ready else 503,
+            content={"status": "ok" if ready else "degraded", "checks": checks},
+        )
 
     app.include_router(repositories_router)
     return app

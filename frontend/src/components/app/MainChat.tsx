@@ -9,9 +9,14 @@ import { Chat } from "@/lib/storage";
 interface MainChatProps {
   activeChat: Chat | null;
   onSendMessage: (content: string) => void;
+  repositoryLabel: string | null;
 }
 
-export default function MainChat({ activeChat, onSendMessage }: MainChatProps) {
+export default function MainChat({
+  activeChat,
+  onSendMessage,
+  repositoryLabel,
+}: MainChatProps) {
   const [isLoading, setIsLoading] = useState(false);
 
   const handleSend = useCallback(async (content: string) => {
@@ -34,12 +39,15 @@ export default function MainChat({ activeChat, onSendMessage }: MainChatProps) {
             className="flex justify-center px-4 pb-4 pt-2"
           >
             <div className="w-full max-w-[900px]">
-              <ChatComposer onSend={handleSend} />
+              <ChatComposer onSend={handleSend} repositoryLabel={repositoryLabel} />
             </div>
           </div>
         </>
       ) : (
-        <WelcomeScreen onSendMessage={handleSend} />
+        <WelcomeScreen
+          onSendMessage={handleSend}
+          repositoryLabel={repositoryLabel}
+        />
       )}
     </div>
   );

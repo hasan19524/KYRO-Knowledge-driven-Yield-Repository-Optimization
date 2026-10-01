@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select, tuple_
 
 from app import config
+from app.api.auth import require_api_key
 from app.db.models import Commit, CommitFile, File, Repository, RepositoryStatus
 from app.ingest.indexer import IndexError_
 from app.state import AppState
@@ -88,7 +89,11 @@ class QueryResponse(BaseModel):
 
 # ----------------------------------------------------------- repo endpoints
 @router.post("/repositories/onboard", status_code=202)
-def onboard(body: OnboardRequest, state: AppState = Depends(get_state)) -> dict:
+def onboard(
+    body: OnboardRequest,
+    state: AppState = Depends(get_state),
+    _: None = Depends(require_api_key),
+) -> dict:
     return state.sync_manager.onboard(
         github_repository_id=body.github_repository_id,
         owner=body.owner,
@@ -122,6 +127,7 @@ def resync(
     github_repository_id: int,
     body: ResyncRequest | None = None,
     state: AppState = Depends(get_state),
+    _: None = Depends(require_api_key),
 ) -> dict:
     snap = state.sync_manager.resync(
         github_repository_id, full=bool(body and body.full), run=True
@@ -133,7 +139,11 @@ def resync(
 
 # ------------------------------------------------------------------- query
 @router.post("/query", response_model=QueryResponse)
-def query(body: QueryRequest, state: AppState = Depends(get_state)) -> QueryResponse:
+def query(
+    body: QueryRequest,
+    state: AppState = Depends(get_state),
+    _: None = Depends(require_api_key),
+) -> QueryResponse:
     session_factory = state.session_factory
     with session_factory() as session:
         repo = session.scalar(

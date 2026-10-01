@@ -22,9 +22,13 @@ function SparkleIcon({ className, style }: { className?: string; style?: React.C
 
 interface WelcomeScreenProps {
   onSendMessage: (content: string) => void;
+  repositoryLabel: string | null;
 }
 
-export default function WelcomeScreen({ onSendMessage }: WelcomeScreenProps) {
+export default function WelcomeScreen({
+  onSendMessage,
+  repositoryLabel,
+}: WelcomeScreenProps) {
   return (
     <div className="flex flex-1 flex-col items-center justify-center px-5 pb-20">
       <div className="flex w-full max-w-[900px] flex-col items-center">
@@ -49,7 +53,7 @@ export default function WelcomeScreen({ onSendMessage }: WelcomeScreenProps) {
         </p>
 
         <div className="animate-fade-in will-animate delay-200 mt-9 w-full">
-          <ChatComposer onSend={onSendMessage} />
+          <ChatComposer onSend={onSendMessage} repositoryLabel={repositoryLabel} />
         </div>
 
         <div className="animate-fade-in will-animate delay-300 mt-5">

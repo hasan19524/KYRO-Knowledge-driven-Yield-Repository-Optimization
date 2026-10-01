@@ -369,3 +369,93 @@ def test_onboard_missing_fields_returns_422(api_env):
     r = api_env.http.post("/api/repositories/onboard", json={})
     assert r.status_code == 422
     assert api_env.manager.pending_sync_ids() == []
+
+
+# ------------------------------------------------------------- API key auth
+def _query_payload() -> dict:
+    return {"github_repository_id": GID, "question": "q"}
+
+
+def test_auth_open_when_key_unset(api_env, monkeypatch):
+    """Development mode: no KYRO_API_KEY => endpoints behave as before."""
+    from app import config
+
+    monkeypatch.setattr(config, "KYRO_API_KEY", "")
+    r = api_env.http.post("/api/query", json=_query_payload())
+    assert r.status_code != 401
+    assert r.status_code == 404  # auth passed; repository simply missing
+
+
+def test_auth_enforced_when_key_set(api_env, monkeypatch):
+    from app import config
+
+    monkeypatch.setattr(config, "KYRO_API_KEY", "sekret-key")
+    correct = {"X-API-Key": "sekret-key"}
+
+    # missing key -> 401 on every guarded endpoint
+    assert api_env.http.post("/api/query", json=_query_payload()).status_code == 401
+    assert (
+        api_env.http.post(
+            "/api/repositories/onboard",
+            json={"github_repository_id": GID, "owner": "a", "name": "b"},
+        ).status_code
+        == 401
+    )
+    assert (
+        api_env.http.post(f"/api/repositories/{GID}/resync", json={}).status_code == 401
+    )
+
+    # wrong key -> 401
+    r = api_env.http.post(
+        "/api/query", json=_query_payload(), headers={"X-API-Key": "wrong"}
+    )
+    assert r.status_code == 401
+
+    # correct key -> request reaches the handler (404 = repo missing, not auth)
+    r = api_env.http.post("/api/query", json=_query_payload(), headers=correct)
+    assert r.status_code == 404
+    r = api_env.http.post(f"/api/repositories/{GID}/resync", json={}, headers=correct)
+    assert r.status_code == 404
+
+    # reads stay open
+    assert api_env.http.get("/api/repositories").status_code == 200
+    assert api_env.http.get("/health").status_code in (200, 503)
+
+
+# -------------------------------------------------------------------- health
+def test_health_ok_when_dependencies_up(api_env):
+    r = api_env.http.get("/health")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["status"] == "ok"
+    assert body["checks"] == {"postgres": "ok", "chroma": "ok"}
+
+
+def test_health_503_when_postgres_down(api_env, monkeypatch):
+    def boom() -> None:
+        raise RuntimeError("pg unreachable")
+
+    monkeypatch.setattr(api_env.state, "session_factory", boom)
+    r = api_env.http.get("/health")
+    assert r.status_code == 503
+    body = r.json()
+    assert body["status"] == "degraded"
+    assert body["checks"]["postgres"] == "error"
+    assert body["checks"]["chroma"] == "ok"
+
+
+def test_health_503_when_chroma_down(api_env):
+    class BrokenIndexer:
+        def ping(self) -> None:
+            raise RuntimeError("chroma unreachable")
+
+        def count(self) -> int:
+            raise RuntimeError("chroma unreachable")
+
+    api_env.state.indexer = BrokenIndexer()
+    r = api_env.http.get("/health")
+    assert r.status_code == 503
+    body = r.json()
+    assert body["status"] == "degraded"
+    assert body["checks"]["chroma"] == "error"
+    assert body["checks"]["postgres"] == "ok"

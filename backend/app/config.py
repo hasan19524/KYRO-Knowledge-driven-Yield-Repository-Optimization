@@ -23,9 +23,16 @@ def _float(name: str, default: float) -> float:
 
 GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
 
+# --- API authentication ----------------------------------------------------
+# Shared secret required (as X-API-Key) on mutation and query endpoints.
+# Unset => authentication disabled (local development only). Production must
+# set it in .env; the Next.js proxy injects it server-side so the browser
+# never sees the value.
+KYRO_API_KEY: str = os.getenv("KYRO_API_KEY", "")
+
 # --- Data stores -----------------------------------------------------------
 # NOTE: host port 5432 belongs to an existing native PostgreSQL that KYRO does
-# not own; KYRO's own cluster publishes on 5433 (see backend/docker-compose.yml).
+# not own; KYRO's own cluster publishes on 5433 (see infra/docker-compose.yml).
 DATABASE_URL: str = os.getenv(
     "DATABASE_URL", "postgresql+psycopg://kyro:kyro@localhost:5433/kyro"
 )

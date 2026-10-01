@@ -5,12 +5,61 @@ import Sidebar from "./Sidebar";
 import MainChat from "./MainChat";
 import Topbar from "./Topbar";
 import { Chat, getAllChats, saveChat, createChat, addMessageToChat, deleteChat } from "@/lib/storage";
+import { RepositorySummary } from "./RepositorySection";
+
+interface QueryReference {
+  commit_sha: string | null;
+  path: string | null;
+  additions: number;
+  deletions: number;
+}
+
+interface QueryAnswer {
+  answer: string;
+  references: QueryReference[];
+}
+
+function formatReferences(refs: QueryReference[] | undefined): string {
+  if (!refs || refs.length === 0) return "";
+  const lines = refs.slice(0, 5).map((r) => {
+    const sha = (r.commit_sha ?? "").slice(0, 7) || "???????";
+    return `${sha} ${r.path ?? "?"} (+${r.additions}/-${r.deletions})`;
+  });
+  return `\n\nReferences:\n${lines.join("\n")}`;
+}
+
+async function askRepository(
+  repositoryId: number,
+  question: string
+): Promise<QueryAnswer> {
+  const res = await fetch("/backend/api/query", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      github_repository_id: repositoryId,
+      question,
+    }),
+  });
+
+  const data: unknown = await res.json().catch(() => null);
+  if (!res.ok) {
+    const detail = (data as { detail?: unknown } | null)?.detail;
+    if (typeof detail === "string") throw new Error(detail);
+    if (detail && typeof detail === "object" && "message" in detail) {
+      const message = (detail as { message?: unknown }).message;
+      if (typeof message === "string") throw new Error(message);
+    }
+    throw new Error(`Query failed (HTTP ${res.status})`);
+  }
+  return data as QueryAnswer;
+}
 
 export default function AppShell() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [chats, setChats] = useState<Chat[]>([]);
   const [activeChatId, setActiveChatId] = useState<string | null>(null);
+  const [selectedRepo, setSelectedRepo] = useState<RepositorySummary | null>(null);
   const [isMobile, setIsMobile] = useState(false);
 
   useEffect(() => {
@@ -56,30 +105,27 @@ export default function AppShell() {
     addMessageToChat(currentChat!.id, userMsg);
     setChats(getAllChats());
 
-    const allMessages = [...(currentChat?.messages || []), userMsg];
-
-    try {
-      const res = await fetch("/api/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          messages: allMessages.map((m) => ({ role: m.role, content: m.content })),
-        }),
-      });
-
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Failed to get response");
-
-      const assistantMsg = { role: "assistant" as const, content: data.content, timestamp: Date.now() };
+    const appendAssistant = (text: string) => {
+      const assistantMsg = { role: "assistant" as const, content: text, timestamp: Date.now() };
       addMessageToChat(currentChat!.id, assistantMsg);
       setChats(getAllChats());
+    };
+
+    if (!selectedRepo) {
+      appendAssistant(
+        "No repository selected. Choose a repository in the sidebar first."
+      );
+      return;
+    }
+
+    try {
+      const data = await askRepository(selectedRepo.github_repository_id, content);
+      appendAssistant(data.answer + formatReferences(data.references));
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : "An error occurred";
-      const errMsg = { role: "assistant" as const, content: `Error: ${errorMsg}`, timestamp: Date.now() };
-      addMessageToChat(currentChat!.id, errMsg);
-      setChats(getAllChats());
+      appendAssistant(`Error: ${errorMsg}`);
     }
-  }, [activeChatId, chats]);
+  }, [activeChatId, chats, selectedRepo]);
 
   const handleDeleteChat = useCallback((id: string) => {
     deleteChat(id);
@@ -110,10 +156,12 @@ export default function AppShell() {
           chats={chats}
           activeChatId={activeChatId}
           collapsed={sidebarCollapsed && !isMobile}
+          selectedRepositoryId={selectedRepo?.github_repository_id ?? null}
           onToggleCollapse={() => setSidebarCollapsed(!sidebarCollapsed)}
           onNewChat={handleNewChat}
           onSelectChat={handleSelectChat}
           onDeleteChat={handleDeleteChat}
+          onSelectRepository={setSelectedRepo}
         />
       </div>
 
@@ -130,6 +178,7 @@ export default function AppShell() {
         <MainChat
           activeChat={activeChat}
           onSendMessage={handleSendMessage}
+          repositoryLabel={selectedRepo?.full_name ?? null}
         />
       </div>
     </div>

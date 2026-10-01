@@ -3,7 +3,7 @@
 import { useState, useMemo } from "react";
 import SidebarHeader from "./SidebarHeader";
 import ChatHistory from "./ChatHistory";
-import RepositorySection from "./RepositorySection";
+import RepositorySection, { RepositorySummary } from "./RepositorySection";
 import UserProfile from "./UserProfile";
 import { Chat } from "@/lib/storage";
 
@@ -11,20 +11,24 @@ interface SidebarProps {
   chats: Chat[];
   activeChatId: string | null;
   collapsed: boolean;
+  selectedRepositoryId: number | null;
   onToggleCollapse: () => void;
   onNewChat: () => void;
   onSelectChat: (id: string) => void;
   onDeleteChat: (id: string) => void;
+  onSelectRepository: (repo: RepositorySummary) => void;
 }
 
 export default function Sidebar({
   chats,
   activeChatId,
   collapsed,
+  selectedRepositoryId,
   onToggleCollapse,
   onNewChat,
   onSelectChat,
   onDeleteChat,
+  onSelectRepository,
 }: SidebarProps) {
   const [searchQuery, setSearchQuery] = useState("");
 
@@ -64,7 +68,10 @@ export default function Sidebar({
             </div>
           </div>
 
-          <RepositorySection />
+          <RepositorySection
+            selectedId={selectedRepositoryId}
+            onSelect={onSelectRepository}
+          />
           <UserProfile />
         </>
       )}
