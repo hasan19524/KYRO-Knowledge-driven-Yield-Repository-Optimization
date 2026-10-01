@@ -1,0 +1,153 @@
+# ============================================================================
+# KYRO Stack A — infrastructure (data plane)
+#   kyro-postgres  PostgreSQL  — SOURCE OF TRUTH (schema via alembic, stack B)
+#   kyro-chroma    ChromaDB    — semantic index (derived, rebuildable)
+#   kyro-kafka     Kafka KRaft — event buffer (7d retention, RF=1 local)
+#   kyro-n8n       n8n         — GitHub webhook -> Kafka translator
+#
+# Start:  docker compose -f infra/docker-compose.yml up -d
+# Stop:   docker compose -f infra/docker-compose.yml down
+#         (never `-v`: the named volumes below hold all state)
+#
+# This stack creates the `kyro-network` bridge. Stack B (app/docker-compose.yml)
+# joins it as external and reaches these services by Docker DNS:
+#   kyro-postgres:5432, kyro-chroma:8000, kyro-kafka:29092, kyro-n8n:5678
+#
+# Data safety: every volume below pins its pre-existing on-disk name via
+# `name:`, so recreating these containers NEVER discards data — including the
+# n8n workflow/credentials (n8n_data), PG schema (backend_kyro-postgres-data),
+# Kafka offsets (local_kyro-kafka-data), Chroma segments (backend_kyro-chroma-data).
+#
+# Host ports (do not re-map; host tooling depends on them):
+#   PG 5433->5432 (5432 is owned by an unrelated native PostgreSQL 17),
+#   Chroma 8100->8000, Kafka 9092 (host listener), n8n 5678.
+# ============================================================================
+
+name: kyro-infra
+
+services:
+  kyro-postgres:
+    image: postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
+    container_name: kyro-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: kyro
+      POSTGRES_PASSWORD: kyro
+      POSTGRES_DB: kyro
+    ports:
+      - "5433:5432"
+    volumes:
+      - kyro-postgres-data:/var/lib/postgresql/data
+    networks:
+      - kyro-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kyro -d kyro"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  kyro-chroma:
+    image: chromadb/chroma@sha256:1e0b73a187a28757c572acba508c46f48c9e8b0acaf5c20e6d95cdedce1acdf6
+    container_name: kyro-chroma
+    restart: unless-stopped
+    ports:
+      - "8100:8000"
+    volumes:
+      - kyro-chroma-data:/chroma/chroma
+    networks:
+      - kyro-network
+    healthcheck:
+      # Chroma >=1.x serves /api/v2/heartbeat; the image ships no python/curl/
+      # wget -> probe with bash /dev/tcp (must run via bash: /bin/sh lacks it).
+      test:
+        [
+          "CMD-SHELL",
+          "bash -c \"exec 3<>/dev/tcp/127.0.0.1/8000 && printf 'GET /api/v2/heartbeat HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' >&3 && head -n 1 <&3 | grep -q ' 200 '\"",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  kyro-kafka:
+    image: apache/kafka:4.3.1
+    container_name: kyro-kafka
+    hostname: kyro-kafka
+    restart: unless-stopped
+    ports:
+      - "9092:9092"
+    environment:
+      # --- KRaft single-node ---
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kyro-kafka:9093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+
+      # Dual listener: HOST :9092 advertised as localhost:9092 for host tools;
+      # PLAINTEXT :29092 advertised as kyro-kafka:29092 for containers on
+      # kyro-network (worker, n8n). One listener cannot serve both.
+      KAFKA_LISTENERS: PLAINTEXT://:29092,CONTROLLER://:9093,HOST://:9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kyro-kafka:29092,HOST://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT,HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+
+      # Single-broker local: RF stays 1 (RF=3 needs 3 brokers — kafka/production).
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+
+      # Kafka is a buffer, not source of truth: 7-day retention.
+      KAFKA_LOG_RETENTION_MS: 604800000
+
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+    volumes:
+      - kyro-kafka-data:/var/lib/kafka/data
+    networks:
+      - kyro-network
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:29092 --list >/dev/null 2>&1",
+        ]
+      interval: 10s
+      timeout: 10s
+      retries: 12
+      start_period: 20s
+
+  kyro-n8n:
+    image: n8nio/n8n@sha256:882b126a8ddd0646e7d17ec47630e7704615e4647f3363471859fddc3f8946e2
+    container_name: kyro-n8n
+    restart: unless-stopped
+    ports:
+      - "5678:5678"
+    volumes:
+      - n8n_data:/home/node/.n8n
+    networks:
+      - kyro-network
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "node -e \"fetch('http://127.0.0.1:5678/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\"",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+
+networks:
+  kyro-network:
+    name: kyro-network
+    driver: bridge
+
+volumes:
+  # `name:` pins the pre-existing on-disk volume (created by the retired
+  # backend/ + kafka/local/ compose files) — upgrading must not orphan state.
+  kyro-postgres-data:
+    name: backend_kyro-postgres-data
+  kyro-chroma-data:
+    name: backend_kyro-chroma-data
+  kyro-kafka-data:
+    name: local_kyro-kafka-data
+  n8n_data:
+    name: n8n_data

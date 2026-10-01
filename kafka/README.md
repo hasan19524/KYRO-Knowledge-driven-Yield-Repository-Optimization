@@ -13,7 +13,7 @@ Contents:
 
 | Path | Purpose |
 |---|---|
-| `local/docker-compose.yml` | Local 1-broker KRaft cluster (RF=1) |
+| `../infra/docker-compose.yml` | Local 1-broker KRaft cluster, service `kyro-kafka` (RF=1) |
 | `local/create-topic.sh` | Create/normalize the local topic (5 partitions, 7-day retention) |
 | `local/verify-partition-key.sh` | Prove key -> partition behavior (items 8/9) |
 | `local/verify-consumer-group.sh` | Prove consumer-group partition distribution (items 10/11) |
@@ -57,7 +57,7 @@ ordering possible at all (Kafka only guarantees order **within** a partition).
 | Partitions | 5 | 5 |
 | Retention | 7 days (`retention.ms=604800000`) | 7 days |
 | Offsets/transaction topic RF | 1 | 3 |
-| Listeners | `HOST://:9092` -> `localhost:9092` (host tools) + `PLAINTEXT://:29092` -> `kyro-kafka:29092` (containers on `kyro-net`) | internal `:9092` per broker |
+| Listeners | `HOST://:9092` -> `localhost:9092` (host tools) + `PLAINTEXT://:29092` -> `kyro-kafka:29092` (containers on `kyro-network`) | internal `:9092` per broker |
 
 Local listeners exist because a single advertised address cannot serve both host
 processes and containers (`localhost` means different things inside each
@@ -135,9 +135,9 @@ Kafka integration, a `Kafka Publish` node was appended after
 - credential `Kafka local` (`kafkaLocalKyro01`): bootstrap `kyro-kafka:29092`,
   SSL off, no auth - contains no secret material.
 
-n8n and Kafka share the user-defined Docker network `kyro-net` (the default
-`bridge` network has no name resolution). n8n was restarted so the published
-workflow and credential are live.
+n8n and Kafka share the user-defined Docker network `kyro-network` (created by
+`infra/docker-compose.yml`; the default `bridge` network has no name
+resolution). The workflow export + bootstrap live in `n8n/`.
 
 ## 7. Verification results (all actually executed)
 

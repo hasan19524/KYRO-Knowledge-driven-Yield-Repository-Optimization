@@ -1,0 +1,147 @@
+# ============================================================================
+# KYRO Stack B — application (API + worker + frontend + migrations)
+# Requires Stack A (infra/docker-compose.yml) running: it creates kyro-network.
+#
+# Start:  docker compose -f app/docker-compose.yml up -d --build
+# Stop:   docker compose -f app/docker-compose.yml down      (never `-v`)
+#
+# Config: repo-root `.env` (copy .env.example) is loaded into containers via
+# env_file. Values in `environment:` below are Docker-internal URLs and always
+# win over .env — inside this network only service DNS works, never localhost.
+#
+# Boot order: kyro-migrate waits for PG, applies alembic (idempotent,
+# non-destructive), exits 0 -> kyro-backend / kyro-worker start
+# (condition: service_completed_successfully). The frontend intentionally does
+# NOT wait on backend health: it must render honest degraded states instead of
+# disappearing when the API is down.
+#
+# Scalable services (backend/worker) carry NO container_name so
+# `docker compose up --scale kyro-worker=2` works.
+# ============================================================================
+
+name: kyro-app
+
+services:
+  kyro-migrate:
+    build:
+      context: ..
+      dockerfile: backend/Dockerfile
+    image: kyro-backend:local
+    env_file:
+      - path: ../.env
+        required: false
+    environment:
+      DATABASE_URL: postgresql+psycopg://kyro:kyro@kyro-postgres:5432/kyro
+    command:
+      - sh
+      - -c
+      - |
+        echo "[kyro-migrate] waiting for kyro-postgres:5432 ..."
+        i=0
+        until python -c "import socket; s = socket.create_connection(('kyro-postgres', 5432), 2); s.close()"; do
+          i=$$((i + 1))
+          if [ "$$i" -ge 30 ]; then
+            echo "[kyro-migrate] FATAL: postgres unreachable after 60s" >&2
+            exit 1
+          fi
+          sleep 2
+        done
+        echo "[kyro-migrate] running: alembic upgrade head"
+        alembic upgrade head
+        echo "[kyro-migrate] OK: schema at head"
+    restart: "no"
+    networks:
+      - kyro-network
+
+  kyro-backend:
+    build:
+      context: ..
+      dockerfile: backend/Dockerfile
+    image: kyro-backend:local
+    restart: unless-stopped
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    env_file:
+      - path: ../.env
+        required: false
+    environment:
+      # Docker-internal URLs (service DNS) — always win over .env:
+      DATABASE_URL: postgresql+psycopg://kyro:kyro@kyro-postgres:5432/kyro
+      CHROMA_URL: http://kyro-chroma:8000
+      KAFKA_BOOTSTRAP_SERVERS: kyro-kafka:29092
+    ports:
+      - "8000:8000"
+    networks:
+      - kyro-network
+    depends_on:
+      kyro-migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      # /health returns 503 until dependencies are ready (Phase 12 semantics):
+      # urlopen raises on 503 -> container shows `unhealthy`, not fake-healthy.
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+
+  kyro-worker:
+    build:
+      context: ..
+      dockerfile: backend/Dockerfile
+    image: kyro-backend:local
+    restart: unless-stopped
+    command: ["python", "-m", "app.worker_main"]
+    env_file:
+      - path: ../.env
+        required: false
+    environment:
+      DATABASE_URL: postgresql+psycopg://kyro:kyro@kyro-postgres:5432/kyro
+      CHROMA_URL: http://kyro-chroma:8000
+      KAFKA_BOOTSTRAP_SERVERS: kyro-kafka:29092
+    networks:
+      - kyro-network
+    depends_on:
+      kyro-migrate:
+        condition: service_completed_successfully
+
+  kyro-frontend:
+    build:
+      context: ..
+      dockerfile: frontend/Dockerfile
+    restart: unless-stopped
+    env_file:
+      - path: ../.env
+        required: false
+    environment:
+      # Server-side proxy target (frontend/src/app/backend/[...path]/route.ts).
+      # Service DNS — Docker names never appear in client-bundled JS.
+      KYRO_BACKEND_URL: http://kyro-backend:8000
+    ports:
+      - "3000:3000"
+    networks:
+      - kyro-network
+    depends_on:
+      - kyro-backend
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+networks:
+  kyro-network:
+    external: true
+    name: kyro-network

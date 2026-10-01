@@ -1,47 +1,59 @@
 # KYRO Docker build-context exclusions.
 # Secrets must NEVER enter an image layer.
+# NOTE: Docker .dockerignore uses filepath.Match semantics WITHOUT .gitignore-style
+# recursion, so nested files need explicit `**/` patterns.
+
+# env / secrets (all directories)
 .env
 .env.*
-!.env.example
+**/.env
+**/.env.*
+!**/.env.example
+*.pem
+*.key
+**/*.pem
+**/*.key
+secrets
+**/secrets
+credentials
+**/credentials
 
 # VCS
 .git
 .gitignore
 
 # dependencies / build artifacts
-node_modules
-.next
+**/node_modules
+**/.next
 out
+**/out
 build
+**/build
 coverage
-frontend/node_modules
-frontend/.next
-frontend/out
-frontend/build
+**/coverage
 
 # python artifacts
-__pycache__
+**/__pycache__
 *.pyc
+**/*.pyc
 .venv
+**/.venv
 venv
-backend/venv
-backend/.venv
+**/venv
 .pytest_cache
+**/.pytest_cache
 .ruff_cache
-.mypy_cache
-*.egg-info
+**/.ruff_cache
+**/*.egg-info
 
-# local data / logs / secrets
+# local data / logs
 *.log
+**/*.log
 *.sql.gz
-*.pem
-*.key
-secrets
-credentials
 kafka/verify/.venv
 kafka/verify/kafka-verify-state.json
 
-# misc
+# docs / CI / misc not needed inside images
 .github
 README.md
 frontend/README.md

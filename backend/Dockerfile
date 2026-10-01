@@ -1,5 +1,5 @@
 # KYRO backend image: FastAPI API + ingestion worker + sync supervisor.
-# Build context is the repository root (see backend/docker-compose.yml).
+# Build context is the repository root (see app/docker-compose.yml).
 FROM python:3.13-slim
 
 ENV PYTHONUNBUFFERED=1 \
