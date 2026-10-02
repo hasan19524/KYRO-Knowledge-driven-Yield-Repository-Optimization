@@ -22,6 +22,9 @@ def _float(name: str, default: float) -> float:
 
 
 GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
+# models/gemini-2.0-flash was retired upstream (404); override via env when
+# Google rotates model versions again.
+GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
 
 # --- API authentication ----------------------------------------------------
 # Shared secret required (as X-API-Key) on mutation and query endpoints.

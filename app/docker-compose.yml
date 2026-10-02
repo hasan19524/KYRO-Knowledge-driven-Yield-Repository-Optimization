@@ -68,6 +68,10 @@ services:
       DATABASE_URL: postgresql+psycopg://kyro:kyro@kyro-postgres:5432/kyro
       CHROMA_URL: http://kyro-chroma:8000
       KAFKA_BOOTSTRAP_SERVERS: kyro-kafka:29092
+    volumes:
+      # Client-side embedding model cache: first Chroma query downloads an
+      # ~80MB ONNX model; keep it across rebuilds or every deploy pays it.
+      - kyro-chroma-model-cache:/root/.cache/chroma
     ports:
       - "8000:8000"
     networks:
@@ -104,6 +108,8 @@ services:
       DATABASE_URL: postgresql+psycopg://kyro:kyro@kyro-postgres:5432/kyro
       CHROMA_URL: http://kyro-chroma:8000
       KAFKA_BOOTSTRAP_SERVERS: kyro-kafka:29092
+    volumes:
+      - kyro-chroma-model-cache:/root/.cache/chroma
     networks:
       - kyro-network
     depends_on:
@@ -145,3 +151,7 @@ networks:
   kyro-network:
     external: true
     name: kyro-network
+
+volumes:
+  kyro-chroma-model-cache:
+    name: kyro-chroma-model-cache
