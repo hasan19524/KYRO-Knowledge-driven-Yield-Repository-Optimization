@@ -8,6 +8,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
 from app.api.repositories import router as repositories_router
+from app.api.users import router as users_router
 from app.state import AppState, build_state
 
 logging.basicConfig(
@@ -76,8 +77,8 @@ def create_app(state: AppState | None = None) -> FastAPI:
 
     if not config.KYRO_API_KEY:
         log.warning(
-            "KYRO_API_KEY is not set; mutation/query endpoints are "
-            "unauthenticated (development mode only)"
+            "KYRO_API_KEY is not set; requests are unauthenticated and act "
+            "as the legacy 'default' user (development mode only)"
         )
 
     app.add_middleware(
@@ -107,6 +108,7 @@ def create_app(state: AppState | None = None) -> FastAPI:
         )
 
     app.include_router(repositories_router)
+    app.include_router(users_router)
     return app
 
 

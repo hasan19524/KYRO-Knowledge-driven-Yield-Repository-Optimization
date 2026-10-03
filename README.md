@@ -72,14 +72,44 @@ Open http://localhost:3000 — add a repository
 | Endpoint | Auth | Purpose |
 |---|---|---|
 | `GET /health` | open | Honest health: `200 {"status":"ok","checks":{...}}` / `503 degraded` when PG or Chroma is down |
-| `GET /api/repositories` | open | List repositories + sync status |
-| `POST /api/repositories/onboard` | `X-API-Key` | Register a repo, enqueue backfill |
-| `POST /api/repositories/{id}/resync` | `X-API-Key` | Re-enqueue backfill |
-| `POST /api/query` | `X-API-Key` | RAG question → `{answer, references[]}` with commit/file citations |
+| `GET /api/repositories` | user key / shared key | List repositories owned by the caller + sync status |
+| `POST /api/repositories/onboard` | user key / shared key | Register a repo (owned by the caller), enqueue backfill |
+| `GET /api/repositories/{id}` | user key / shared key | One repository's snapshot (404 if not yours) |
+| `POST /api/repositories/{id}/resync` | user key / shared key | Re-enqueue backfill |
+| `POST /api/query` | user key / shared key | RAG question → `{answer, references[]}` with commit/file citations |
+| `POST /api/users` | admin | Create a user; returns a one-time API key |
+| `GET /api/users`, `GET /api/users/{id}` | admin | List / inspect users (never exposes keys) |
+| `POST /api/users/{id}/rotate-key` | admin | Issue a new key (returned once) |
+| `POST /api/users/{id}/deactivate`, `.../reactivate` | admin | Disable/enable a user (deactivated keys are always rejected) |
+| `DELETE /api/users/{id}` | admin | Delete a user (409 while they own repositories) |
 
-Auth is enabled only when `KYRO_API_KEY` is set (constant-time compare;
-dev mode without it). The browser never holds the key — the Next.js proxy
-injects it server-side.
+### Authentication & repository isolation
+
+Identity is always derived **server-side** from `X-API-Key` — a
+client-supplied user id is never trusted:
+
+- **Per-user API key** (`kyro_...`, stored only as its SHA-256 hash) → that
+  user's identity. Every repository operation is scoped to the authenticated
+  user: another user's repository answers `404` (no existence leak), and
+  onboarding a repository someone else owns answers `409`.
+- **Shared service key** (`KYRO_API_KEY`, constant-time compare) → the legacy
+  `default` identity. The Next.js proxy injects it server-side, so the
+  existing frontend keeps working unchanged.
+- **No key configured** (dev mode) → same open behavior as before; requests
+  act as the `default` user.
+
+User management (`/api/users`) is admin-only: shared service key in
+production, open in dev mode. Keys are returned exactly once (issue/rotate);
+deactivated users are always rejected (fail-closed). Migration
+`7c3f1a9d2e45` adds `users`, seeds `default`, and backfills existing
+repositories to it; `repositories.owner_user_id` is nullable with
+`ON DELETE RESTRICT` (a user who still owns repositories cannot be deleted).
+
+Ingestion ownership: Kafka events carry no KYRO user id — the worker derives
+ownership from the PostgreSQL repository record only and never writes
+`owner_user_id` from a payload. Rows created by ingestion before any
+onboarding are **unowned**: visible only to `default` (per-user keys locked
+out, fail-closed) until the first onboarding claims them.
 
 Query gating: `409` SYNCING/SYNC_FAILED, `403` ACCESS_REVOKED, `404` unknown
 repo, `503` retrieval failure, `502` LLM failure — messages surfaced verbatim.
@@ -90,7 +120,7 @@ repo, `503` retrieval failure, `502` LLM failure — messages surfaced verbatim.
 # Backend (Python 3.13 venv in backend/.venv)
 cd backend
 python -m pip install -r requirements.txt
-python -m pytest tests/ -q          # 76 tests
+python -m pytest tests/ -q          # 95 tests
 python -m ruff check app tests alembic
 python -m pyright app tests alembic
 

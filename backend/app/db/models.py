@@ -55,6 +55,12 @@ class PhaseStatus(enum.StrEnum):
     DONE = "done"
 
 
+# Identity of the legacy/shared-key tenant (config.KYRO_API_KEY, seeded by
+# the ownership migration). Every repository that existed before per-user
+# ownership was introduced belongs to this user.
+DEFAULT_USER_HANDLE = "default"
+
+
 class GithubInstallation(Base):
     __tablename__ = "github_installations"
 
@@ -72,13 +78,52 @@ class GithubInstallation(Base):
     )
 
 
+class User(Base):
+    """KYRO user account.
+
+    Authentication is by API key only: `api_key_hash` stores the SHA-256 of
+    the key (plaintext returned exactly once at issue/rotation). The shared
+    service key (config.KYRO_API_KEY) maps to the `default` user instead of
+    a stored key, so the Next.js proxy keeps working unchanged.
+    """
+
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    handle: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
+    api_key_hash: Mapped[str | None] = mapped_column(Text, unique=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False
+    )
+
+    repositories: Mapped[list[Repository]] = relationship(
+        back_populates="owner_user",
+        # Let the database enforce ON DELETE RESTRICT: never silently null
+        # out ownership by deleting a user who still owns repositories.
+        passive_deletes=True,
+    )
+
+
 class Repository(Base):
     __tablename__ = "repositories"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     # GitHub repository ID is the canonical EXTERNAL identity (locked rule).
+    # It identifies the repository, NEVER the user that owns it in KYRO.
     github_repository_id: Mapped[int] = mapped_column(
         BigInteger, unique=True, nullable=False
+    )
+    # KYRO ownership: which user may see/operate this repository. Nullable
+    # only for rows created by the ingestion worker before (or without) an
+    # onboarding claim; unowned rows are invisible to per-user identities.
+    # Never written from Kafka event payloads - only the onboarding API and
+    # the ownership migration set it.
+    owner_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), index=True
     )
     name: Mapped[str] = mapped_column(Text, nullable=False)
     full_name: Mapped[str] = mapped_column(Text, nullable=False)
@@ -111,6 +156,7 @@ class Repository(Base):
     files: Mapped[list[File]] = relationship(
         back_populates="repository", cascade="all, delete-orphan"
     )
+    owner_user: Mapped[User | None] = relationship(back_populates="repositories")
 
 
 class Commit(Base):

@@ -80,7 +80,14 @@ class ApplyResult:
 def resolve_repository(
     session: Session, payload: IngestionEventPayload, *, lock: bool = True
 ) -> Repository:
-    """Get-or-create the repository row; NEVER changes synchronization status."""
+    """Get-or-create the repository row; NEVER changes synchronization status.
+
+    Ownership invariant (multi-user isolation): this function NEVER reads or
+    writes `owner_user_id` from event data. For an existing row the KYRO
+    owner is whatever PostgreSQL already records; a row created here stays
+    unowned (owner_user_id IS NULL) until the onboarding API claims it -
+    event payloads carry no trusted user identity and must never assign one.
+    """
     q = select(Repository).where(
         Repository.github_repository_id == payload.repository.github_id
     )

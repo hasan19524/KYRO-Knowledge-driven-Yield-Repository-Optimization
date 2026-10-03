@@ -30,7 +30,7 @@ CHROMA_URL = os.environ.get("CHROMA_URL", "http://localhost:8100")
 
 ADMIN_TABLES = (
     "commit_files,commits,files,github_installations,"
-    "ingestion_events,repositories,alembic_version"
+    "ingestion_events,repositories,users,alembic_version"
 )
 
 

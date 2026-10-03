@@ -12,15 +12,16 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import select, tuple_
 
 from app import config
-from app.api.auth import require_api_key
+from app.api.auth import CurrentUser, get_state, may_access, require_user
 from app.db.models import Commit, CommitFile, File, Repository, RepositoryStatus
 from app.ingest.indexer import IndexError_
 from app.state import AppState
+from app.sync.manager import RepositoryOwnershipConflict
 
 log = logging.getLogger("kyro.api")
 
@@ -38,10 +39,6 @@ ACCESS_REVOKED_MESSAGE = (
     "KYRO no longer has GitHub access to this repository. "
     "Re-authorize the KYRO GitHub App to restore access."
 )
-
-
-def get_state(request: Request) -> AppState:
-    return request.app.state.kyro
 
 
 # ------------------------------------------------------------------ schemas
@@ -92,32 +89,53 @@ class QueryResponse(BaseModel):
 def onboard(
     body: OnboardRequest,
     state: AppState = Depends(get_state),
-    _: None = Depends(require_api_key),
+    user: CurrentUser = Depends(require_user),
 ) -> dict:
-    return state.sync_manager.onboard(
-        github_repository_id=body.github_repository_id,
-        owner=body.owner,
-        name=body.name,
-        full_name=body.full_name,
-        installation_id=body.installation_id,
-        default_branch=body.default_branch,
-        private=body.private,
-        url=body.url,
-        run=True,
-    )
+    # Ownership always comes from the authenticated identity; any
+    # owner/owner_user_id field a client might send is ignored (the
+    # request schema does not accept it).
+    try:
+        return state.sync_manager.onboard(
+            github_repository_id=body.github_repository_id,
+            owner=body.owner,
+            name=body.name,
+            full_name=body.full_name,
+            installation_id=body.installation_id,
+            default_branch=body.default_branch,
+            private=body.private,
+            url=body.url,
+            run=True,
+            owner_user_id=user.id,
+        )
+    except RepositoryOwnershipConflict as exc:
+        raise HTTPException(
+            status_code=409, detail="repository is owned by another user"
+        ) from exc
 
 
 @router.get("/repositories")
-def list_repositories(state: AppState = Depends(get_state)) -> list[dict]:
-    return state.sync_manager.list_snapshots()
+def list_repositories(
+    state: AppState = Depends(get_state),
+    user: CurrentUser = Depends(require_user),
+) -> list[dict]:
+    return state.sync_manager.list_snapshots(
+        owner_user_id=user.id, include_unowned=user.is_default
+    )
 
 
 @router.get("/repositories/{github_repository_id}")
 def get_repository(
-    github_repository_id: int, state: AppState = Depends(get_state)
+    github_repository_id: int,
+    state: AppState = Depends(get_state),
+    user: CurrentUser = Depends(require_user),
 ) -> dict:
-    snap = state.sync_manager.snapshot(github_repository_id)
+    snap = state.sync_manager.snapshot(
+        github_repository_id,
+        owner_user_id=user.id,
+        include_unowned=user.is_default,
+    )
     if snap is None:
+        # Missing AND not-owned-by-you answer identically: no existence leak.
         raise HTTPException(status_code=404, detail="repository not found")
     return snap
 
@@ -127,10 +145,14 @@ def resync(
     github_repository_id: int,
     body: ResyncRequest | None = None,
     state: AppState = Depends(get_state),
-    _: None = Depends(require_api_key),
+    user: CurrentUser = Depends(require_user),
 ) -> dict:
     snap = state.sync_manager.resync(
-        github_repository_id, full=bool(body and body.full), run=True
+        github_repository_id,
+        full=bool(body and body.full),
+        run=True,
+        owner_user_id=user.id,
+        include_unowned=user.is_default,
     )
     if snap is None:
         raise HTTPException(status_code=404, detail="repository not found")
@@ -142,7 +164,7 @@ def resync(
 def query(
     body: QueryRequest,
     state: AppState = Depends(get_state),
-    _: None = Depends(require_api_key),
+    user: CurrentUser = Depends(require_user),
 ) -> QueryResponse:
     session_factory = state.session_factory
     with session_factory() as session:
@@ -151,7 +173,9 @@ def query(
                 Repository.github_repository_id == body.github_repository_id
             )
         )
-        if repo is None:
+        # Ownership first: another user's repository is indistinguishable
+        # from a missing one (404), before any status/retrieval detail.
+        if repo is None or not may_access(repo, user):
             raise HTTPException(status_code=404, detail="repository not found")
 
         if repo.status == RepositoryStatus.SYNCING.value:

@@ -35,7 +35,7 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import func, select, text
+from sqlalchemy import func, or_, select, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from app import config
@@ -101,6 +101,26 @@ class SyncStatusChanged(SyncRunError):
         self.observed_status = status
 
 
+class RepositoryOwnershipConflict(RuntimeError):
+    """Onboarding attempted for a repository owned by a different user."""
+
+
+def _visible(
+    repo: Repository, owner_user_id: int | None, include_unowned: bool
+) -> bool:
+    """Ownership visibility rule (server-side, never client-supplied).
+
+    owner_user_id=None => internal/system view (everything visible).
+    Otherwise: owned rows only to their owner; unowned rows only when the
+    caller explicitly allows them (legacy `default` identity).
+    """
+    if owner_user_id is None:
+        return True
+    if repo.owner_user_id is None:
+        return include_unowned
+    return repo.owner_user_id == owner_user_id
+
+
 class SyncManager:
     def __init__(
         self,
@@ -151,12 +171,19 @@ class SyncManager:
         private: bool = False,
         url: str | None = None,
         run: bool = True,
+        owner_user_id: int | None = None,
     ) -> dict:
         """Create/refresh the repository row and mark it SYNCING (§44/§56).
 
         An existing row keeps its published boundary so an interrupted sync
         resumes instead of re-walking everything (events are idempotent
         either way).
+
+        Ownership (owner_user_id): a new row is created for `owner_user_id`
+        (None = internal/system caller); an unowned row is claimed by the
+        caller; a row owned by someone else raises
+        RepositoryOwnershipConflict - github_repository_id identifies the
+        repository, never the user.
         """
         with self.session_factory() as session, session.begin():
             repo = session.scalar(
@@ -176,15 +203,33 @@ class SyncManager:
                     github_installation_id=installation_id,
                     status=RepositoryStatus.SYNCING.value,
                     sync_started_at=_now(),
+                    owner_user_id=owner_user_id,
                 )
                 session.add(repo)
                 log.info(
-                    "repo_onboarded github_repository_id=%d owner=%s name=%s",
+                    "repo_onboarded github_repository_id=%d owner=%s name=%s "
+                    "owner_user_id=%s",
                     github_repository_id,
                     owner,
                     name,
+                    owner_user_id,
                 )
             else:
+                # Ownership gate runs BEFORE any mutation so a rejected
+                # onboarding leaves the repository completely untouched.
+                if repo.owner_user_id is None:
+                    if owner_user_id is not None:
+                        # First claim of a row the ingestion worker created.
+                        repo.owner_user_id = owner_user_id
+                        log.info(
+                            "repo_claimed github_repository_id=%d owner_user_id=%d",
+                            github_repository_id,
+                            owner_user_id,
+                        )
+                elif repo.owner_user_id != owner_user_id:
+                    raise RepositoryOwnershipConflict(
+                        f"repository {github_repository_id} is owned by another user"
+                    )
                 previous = repo.status
                 repo.name = name
                 repo.full_name = full_name or f"{owner}/{name}"
@@ -207,15 +252,27 @@ class SyncManager:
                 )
         if run:
             self.trigger(github_repository_id)
-        return self.snapshot(github_repository_id)  # type: ignore[return-value]
+        return self.snapshot(  # type: ignore[return-value]
+            github_repository_id, owner_user_id=owner_user_id
+        )
 
     def resync(
-        self, github_repository_id: int, *, full: bool = False, run: bool = True
+        self,
+        github_repository_id: int,
+        *,
+        full: bool = False,
+        run: bool = True,
+        owner_user_id: int | None = None,
+        include_unowned: bool = False,
     ) -> dict | None:
         """Re-run synchronization for an existing repository.
 
         full=True clears the published boundary so the entire history is
         re-published (recovery when buffered Kafka events expired).
+
+        Visibility: returns None (like a missing row) when the repository
+        is not visible to `owner_user_id`, so callers answer 404 without
+        leaking existence. owner_user_id=None is the internal/system view.
         """
         with self.session_factory() as session, session.begin():
             repo = session.scalar(
@@ -225,6 +282,8 @@ class SyncManager:
             )
             if repo is None:
                 return None
+            if not _visible(repo, owner_user_id, include_unowned):
+                return None
             previous = repo.status
             repo.status = RepositoryStatus.SYNCING.value
             repo.last_error = None
@@ -233,14 +292,20 @@ class SyncManager:
             if full:
                 repo.backfill_published_through_commit = None
             log.info(
-                "repo_resync github_repository_id=%d previous_status=%s full=%s",
+                "repo_resync github_repository_id=%d previous_status=%s full=%s "
+                "requested_by_user_id=%s",
                 github_repository_id,
                 previous,
                 full,
+                owner_user_id,
             )
         if run:
             self.trigger(github_repository_id)
-        return self.snapshot(github_repository_id)  # type: ignore[return-value]
+        return self.snapshot(  # type: ignore[return-value]
+            github_repository_id,
+            owner_user_id=owner_user_id,
+            include_unowned=include_unowned,
+        )
 
     def run_sync(self, github_repository_id: int) -> str:
         """Blocking synchronization run. Returns the final repository status."""
@@ -265,7 +330,19 @@ class SyncManager:
         self._executor.submit(_job)
         return True
 
-    def snapshot(self, github_repository_id: int) -> dict | None:
+    def snapshot(
+        self,
+        github_repository_id: int,
+        *,
+        owner_user_id: int | None = None,
+        include_unowned: bool = False,
+    ) -> dict | None:
+        """Status snapshot, visibility-scoped (None when not visible).
+
+        owner_user_id=None is the internal/system view (no scoping) used by
+        the sync supervisor and tests; API callers always pass the identity
+        resolved from the credential, never a client-supplied id.
+        """
         with self.session_factory() as session:
             repo = session.scalar(
                 select(Repository).where(
@@ -273,6 +350,8 @@ class SyncManager:
                 )
             )
             if repo is None:
+                return None
+            if not _visible(repo, owner_user_id, include_unowned):
                 return None
             deferred = session.scalar(
                 select(func.count())
@@ -308,14 +387,33 @@ class SyncManager:
                 "sync_running": self.is_active(github_repository_id),
             }
 
-    def list_snapshots(self) -> list[dict]:
+    def list_snapshots(
+        self,
+        *,
+        owner_user_id: int | None = None,
+        include_unowned: bool = False,
+    ) -> list[dict]:
+        """Visibility-scoped snapshots of every repository the caller may see."""
         with self.session_factory() as session:
-            ids = session.scalars(
-                select(Repository.github_repository_id).order_by(Repository.id)
-            ).all()
+            query = select(Repository.github_repository_id).order_by(Repository.id)
+            if owner_user_id is not None:
+                if include_unowned:
+                    query = query.where(
+                        or_(
+                            Repository.owner_user_id == owner_user_id,
+                            Repository.owner_user_id.is_(None),
+                        )
+                    )
+                else:
+                    query = query.where(Repository.owner_user_id == owner_user_id)
+            ids = session.scalars(query).all()
         out: list[dict] = []
         for gid in ids:
-            snap = self.snapshot(gid)
+            snap = self.snapshot(
+                gid,
+                owner_user_id=owner_user_id,
+                include_unowned=include_unowned,
+            )
             if snap:
                 out.append(snap)
         return out
@@ -925,6 +1023,7 @@ class _RepoRow:
 
 
 __all__ = [
+    "RepositoryOwnershipConflict",
     "SyncManager",
     "SyncPublishError",
     "SyncRunError",

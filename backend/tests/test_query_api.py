@@ -417,8 +417,11 @@ def test_auth_enforced_when_key_set(api_env, monkeypatch):
     r = api_env.http.post(f"/api/repositories/{GID}/resync", json={}, headers=correct)
     assert r.status_code == 404
 
-    # reads stay open
-    assert api_env.http.get("/api/repositories").status_code == 200
+    # reads are identity-scoped now: they require the key when one is set
+    assert api_env.http.get("/api/repositories").status_code == 401
+    assert api_env.http.get(f"/api/repositories/{GID}").status_code == 401
+    assert api_env.http.get("/api/repositories", headers=correct).status_code == 200
+    # health stays open (readiness probe, no repository data)
     assert api_env.http.get("/health").status_code in (200, 503)
 
 
