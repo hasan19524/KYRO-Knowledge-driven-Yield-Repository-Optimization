@@ -5,7 +5,7 @@ from __future__ import annotations
 import contextlib
 import logging
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -16,6 +16,7 @@ from app.github.backfill import BackfillService
 from app.github.client import GitHubClient
 from app.ingest.indexer import ChromaIndexer
 from app.ingest.processor import EventProcessor
+from app.security.ratelimit import RateLimiter
 from app.sync.manager import SyncManager
 
 log = logging.getLogger("kyro.state")
@@ -30,6 +31,9 @@ class AppState:
     backfill: BackfillService
     sync_manager: SyncManager
     llm: Callable[[str], str]
+    # Per-process abuse controls; default_factory keeps every construction
+    # site (production + tests) isolated.
+    rate_limiter: RateLimiter = field(default_factory=RateLimiter)
 
     def shutdown(self) -> None:
         self.sync_manager.shutdown(wait=False)

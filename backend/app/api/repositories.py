@@ -18,6 +18,7 @@ from sqlalchemy import select, tuple_
 
 from app import config
 from app.api.auth import CurrentUser, get_state, may_access, require_user
+from app.api.ratelimit import rate_limit
 from app.db.models import Commit, CommitFile, File, Repository, RepositoryStatus
 from app.ingest.indexer import IndexError_
 from app.state import AppState
@@ -26,6 +27,14 @@ from app.sync.manager import RepositoryOwnershipConflict
 log = logging.getLogger("kyro.api")
 
 router = APIRouter(prefix="/api", tags=["repositories"])
+
+# Request-bounds: GitHub names are <= 39 chars; limits are deliberately
+# generous but bounded so hostile payloads cannot reach the DB/LLM unbounded.
+MAX_OWNER_CHARS = 100
+MAX_NAME_CHARS = 100
+MAX_FULL_NAME_CHARS = 200
+MAX_URL_CHARS = 500
+MAX_BRANCH_CHARS = 255
 
 SYNCING_MESSAGE = (
     "Repository synchronization is in progress. "
@@ -44,13 +53,15 @@ ACCESS_REVOKED_MESSAGE = (
 # ------------------------------------------------------------------ schemas
 class OnboardRequest(BaseModel):
     github_repository_id: int = Field(gt=0)
-    owner: str = Field(min_length=1)
-    name: str = Field(min_length=1)
-    full_name: str | None = None
+    owner: str = Field(min_length=1, max_length=MAX_OWNER_CHARS)
+    name: str = Field(min_length=1, max_length=MAX_NAME_CHARS)
+    full_name: str | None = Field(
+        default=None, min_length=1, max_length=MAX_FULL_NAME_CHARS
+    )
     installation_id: int | None = None
-    default_branch: str | None = None
+    default_branch: str | None = Field(default=None, max_length=MAX_BRANCH_CHARS)
     private: bool = False
-    url: str | None = None
+    url: str | None = Field(default=None, max_length=MAX_URL_CHARS)
 
 
 class ResyncRequest(BaseModel):
@@ -59,7 +70,7 @@ class ResyncRequest(BaseModel):
 
 class QueryRequest(BaseModel):
     github_repository_id: int = Field(gt=0)
-    question: str = Field(min_length=1)
+    question: str = Field(min_length=1, max_length=config.QUERY_MAX_QUESTION_CHARS)
     top_k: int | None = Field(default=None, ge=1, le=50)
 
 
@@ -146,6 +157,7 @@ def resync(
     body: ResyncRequest | None = None,
     state: AppState = Depends(get_state),
     user: CurrentUser = Depends(require_user),
+    _rate: None = Depends(rate_limit("resync", "RATE_LIMIT_RESYNC_PER_MIN")),
 ) -> dict:
     snap = state.sync_manager.resync(
         github_repository_id,
@@ -165,6 +177,7 @@ def query(
     body: QueryRequest,
     state: AppState = Depends(get_state),
     user: CurrentUser = Depends(require_user),
+    _rate: None = Depends(rate_limit("query", "RATE_LIMIT_QUERY_PER_MIN")),
 ) -> QueryResponse:
     session_factory = state.session_factory
     with session_factory() as session:

@@ -42,6 +42,15 @@ def _check_chroma(state: AppState) -> str:
         return "error"
 
 
+def _docs_enabled() -> bool:
+    """Interactive API docs/OpenAPI: dev-only unless KYRO_DOCS forces it."""
+    if config.KYRO_DOCS == "on":
+        return True
+    if config.KYRO_DOCS == "off":
+        return False
+    return not config.KYRO_API_KEY
+
+
 def create_app(state: AppState | None = None) -> FastAPI:
     """Build the FastAPI app.
 
@@ -73,7 +82,21 @@ def create_app(state: AppState | None = None) -> FastAPI:
                 supervisor.join(timeout=5)
             app_state.shutdown()
 
-    app = FastAPI(title="KYRO Backend", version="0.1.0", lifespan=lifespan)
+    docs = _docs_enabled()
+    app = FastAPI(
+        title="KYRO Backend",
+        version="0.1.0",
+        lifespan=lifespan,
+        docs_url="/docs" if docs else None,
+        redoc_url="/redoc" if docs else None,
+        openapi_url="/openapi.json" if docs else None,
+    )
+    if not docs:
+        log.info(
+            "API docs/OpenAPI disabled (KYRO_DOCS=%s, api_key_set=%s)",
+            config.KYRO_DOCS,
+            bool(config.KYRO_API_KEY),
+        )
 
     if not config.KYRO_API_KEY:
         log.warning(
@@ -83,7 +106,7 @@ def create_app(state: AppState | None = None) -> FastAPI:
 
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["http://localhost:3000"],
+        allow_origins=config.CORS_ORIGINS,
         allow_methods=["*"],
         allow_headers=["*"],
     )

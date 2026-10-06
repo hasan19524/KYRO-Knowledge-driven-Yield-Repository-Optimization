@@ -67,6 +67,36 @@ Open http://localhost:3000 — add a repository
 | Kafka | 9092 |
 | ChromaDB | 8100 |
 
+All host ports are bound to `127.0.0.1` only (never `0.0.0.0`/LAN) —
+including the data stores and n8n's editor/webhook.
+
+### Security surface
+
+- **Webhook**: GitHub → n8n verifies `X-Hub-Signature-256` (HMAC-SHA256 of
+  the raw body with `KYRO_WEBHOOK_SECRET`, constant-time compare) and rejects
+  unsigned/wrongly-signed deliveries with `401` before anything reaches
+  Kafka. Unset secret = fail closed (every delivery rejected).
+- **API auth**: `X-API-Key` on every `/api/*` endpoint (per-user `kyro_...`
+  key or the shared `KYRO_API_KEY`; `/api/users` needs the shared key).
+  Only `GET /health` is open. Unset key = dev mode (open, never in prod).
+- **Rate limits** (per-user fixed window, `429` + `Retry-After`):
+  `POST /api/query` ≤ `RATE_LIMIT_QUERY_PER_MIN`/min (default 60),
+  `POST /api/repositories/{id}/resync` ≤ `RATE_LIMIT_RESYNC_PER_MIN`/min
+  (default 10); `0` disables. `question` is capped at
+  `QUERY_MAX_QUESTION_CHARS` (default 2000, `422` beyond).
+- **Request bounds**: `owner`/`name` ≤ 100, `full_name` ≤ 200, `url` ≤ 500,
+  `default_branch` ≤ 255 chars (`422` beyond).
+- **API docs**: `/docs`, `/redoc`, `/openapi.json` are served only in
+  development (`KYRO_API_KEY` unset); set `KYRO_DOCS=on|off` to force.
+- **CORS**: browser origins restricted to `CORS_ORIGINS`
+  (default `http://localhost:3000`, comma-separated).
+- **Known advisory (no upstream fix)**: chromadb 1.5.9 ships
+  CVE-2026-45829 / PYSEC-2026-311 (pre-auth RCE in the HTTP API). It cannot
+  be patched away yet; the mitigation is exposure — Chroma is reachable only
+  via `127.0.0.1:8100` (or the compose-internal network) and never faces the
+  LAN/Internet. CI's `pip-audit` ignores exactly the five known chromadb
+  1.5.9 advisory IDs and fails on any *new* finding.
+
 ## API
 
 | Endpoint | Auth | Purpose |
@@ -120,7 +150,7 @@ repo, `503` retrieval failure, `502` LLM failure — messages surfaced verbatim.
 # Backend (Python 3.13 venv in backend/.venv)
 cd backend
 python -m pip install -r requirements.txt
-python -m pytest tests/ -q          # 95 tests
+python -m pytest tests/ -q          # 115 tests (95 baseline + 20 security)
 python -m ruff check app tests alembic
 python -m pyright app tests alembic
 

@@ -60,7 +60,7 @@ jobs:
           cache-dependency-path: backend/requirements.txt
 
       - name: Install dependencies
-        run: pip install -r backend/requirements.txt pytest ruff pyright
+        run: pip install -r backend/requirements.txt pytest ruff pyright pip-audit
 
       - name: ruff
         run: ruff check app tests alembic
@@ -69,6 +69,15 @@ jobs:
       - name: pyright
         run: pyright
         working-directory: backend
+
+      - name: pip-audit (fail on NEW dependency vulnerabilities)
+        run: >-
+          pip-audit -r backend/requirements.txt
+          --ignore-vuln PYSEC-2026-311
+          --ignore-vuln PYSEC-2026-3813
+          --ignore-vuln PYSEC-2026-3814
+          --ignore-vuln PYSEC-2026-3815
+          --ignore-vuln CVE-2026-45829
 
       - name: Wait for service ports
         run: |
@@ -102,6 +111,10 @@ jobs:
 
       - name: lint
         run: npm run lint
+        working-directory: frontend
+
+      - name: test
+        run: npm test
         working-directory: frontend
 
       - name: build

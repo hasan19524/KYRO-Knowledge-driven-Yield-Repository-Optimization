@@ -9,8 +9,12 @@
 # Stop:   docker compose -f infra/docker-compose.yml down
 #         (never `-v`: the named volumes below hold all state)
 #
-# This stack creates the `kyro-network` bridge. Stack B (app/docker-compose.yml)
-# joins it as external and reaches these services by Docker DNS:
+# This stack creates two bridge networks:
+#   kyro-network — shared with Stack B for API traffic (backend <-> frontend)
+#   kyro-data    — internal data plane (postgres, chroma, kafka, n8n) joined
+#                  only by stack B's migrate/backend/worker. The frontend is
+#                  intentionally NOT attached and cannot reach these services.
+# Stack B joins both as external and reaches services by Docker DNS:
 #   kyro-postgres:5432, kyro-chroma:8000, kyro-kafka:29092, kyro-n8n:5678
 #
 # Data safety: every volume below pins its pre-existing on-disk name via
@@ -18,9 +22,11 @@
 # n8n workflow/credentials (n8n_data), PG schema (backend_kyro-postgres-data),
 # Kafka offsets (local_kyro-kafka-data), Chroma segments (backend_kyro-chroma-data).
 #
-# Host ports (do not re-map; host tooling depends on them):
+# Host ports (SECURITY: bound to 127.0.0.1 only — never LAN/Internet):
 #   PG 5433->5432 (5432 is owned by an unrelated native PostgreSQL 17),
 #   Chroma 8100->8000, Kafka 9092 (host listener), n8n 5678.
+#   Host tooling and the host-run test suite use localhost; containers use
+#   Docker DNS on kyro-data and never traverse these host mappings.
 # ============================================================================
 
 name: kyro-infra
@@ -35,11 +41,11 @@ services:
       POSTGRES_PASSWORD: kyro
       POSTGRES_DB: kyro
     ports:
-      - "5433:5432"
+      - "127.0.0.1:5433:5432"
     volumes:
       - kyro-postgres-data:/var/lib/postgresql/data
     networks:
-      - kyro-network
+      - kyro-data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U kyro -d kyro"]
       interval: 5s
@@ -51,11 +57,11 @@ services:
     container_name: kyro-chroma
     restart: unless-stopped
     ports:
-      - "8100:8000"
+      - "127.0.0.1:8100:8000"
     volumes:
       - kyro-chroma-data:/chroma/chroma
     networks:
-      - kyro-network
+      - kyro-data
     healthcheck:
       # Chroma >=1.x serves /api/v2/heartbeat; the image ships no python/curl/
       # wget -> probe with bash /dev/tcp (must run via bash: /bin/sh lacks it).
@@ -74,7 +80,7 @@ services:
     hostname: kyro-kafka
     restart: unless-stopped
     ports:
-      - "9092:9092"
+      - "127.0.0.1:9092:9092"
     environment:
       # --- KRaft single-node ---
       KAFKA_NODE_ID: 1
@@ -82,9 +88,10 @@ services:
       KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kyro-kafka:9093
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
 
-      # Dual listener: HOST :9092 advertised as localhost:9092 for host tools;
-      # PLAINTEXT :29092 advertised as kyro-kafka:29092 for containers on
-      # kyro-network (worker, n8n). One listener cannot serve both.
+      # Dual listener: HOST :9092 advertised as localhost:9092 for host tools
+      # (bound to 127.0.0.1 above — host-only); PLAINTEXT :29092 advertised as
+      # kyro-kafka:29092 for containers on kyro-data (worker, backend, n8n).
+      # One listener cannot serve both.
       KAFKA_LISTENERS: PLAINTEXT://:29092,CONTROLLER://:9093,HOST://:9092
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kyro-kafka:29092,HOST://localhost:9092
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT,HOST:PLAINTEXT
@@ -102,7 +109,7 @@ services:
     volumes:
       - kyro-kafka-data:/var/lib/kafka/data
     networks:
-      - kyro-network
+      - kyro-data
     healthcheck:
       test:
         [
@@ -118,12 +125,23 @@ services:
     image: n8nio/n8n@sha256:882b126a8ddd0646e7d17ec47630e7704615e4647f3363471859fddc3f8946e2
     container_name: kyro-n8n
     restart: unless-stopped
+    environment:
+      # GitHub webhook HMAC-SHA256 secret. GitHub signs the raw request body
+      # with this value (X-Hub-Signature-256); the workflow's "Verify HMAC"
+      # node fails CLOSED (401) when the header is missing, malformed, or
+      # wrong - and also when this variable is empty. Set a real random value
+      # in the root .env (git-ignored); see .env.example. NEVER commit it.
+      KYRO_WEBHOOK_SECRET: ${KYRO_WEBHOOK_SECRET}
+      # n8n 2.x denies $env reads from Code nodes by default
+      # (ExpressionError: "access to env vars denied"). The Verify HMAC node
+      # needs $KYRO_WEBHOOK_SECRET; allow env reads explicitly.
+      N8N_BLOCK_ENV_ACCESS_IN_NODE: "false"
     ports:
-      - "5678:5678"
+      - "127.0.0.1:5678:5678"
     volumes:
       - n8n_data:/home/node/.n8n
     networks:
-      - kyro-network
+      - kyro-data
     healthcheck:
       test:
         [
@@ -138,6 +156,11 @@ services:
 networks:
   kyro-network:
     name: kyro-network
+    driver: bridge
+  # Internal data plane: attach ONLY migrate/backend/worker from stack B.
+  # The frontend must never join this network (no Chroma/PG/Kafka/n8n routes).
+  kyro-data:
+    name: kyro-data
     driver: bridge
 
 volumes:

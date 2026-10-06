@@ -33,6 +33,19 @@ GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
 # never sees the value.
 KYRO_API_KEY: str = os.getenv("KYRO_API_KEY", "")
 
+# --- Security surface (audit remediation) ----------------------------------
+# Interactive API docs (/docs, /redoc) and the OpenAPI schema:
+#   auto (default) = enabled only in development (KYRO_API_KEY unset);
+#   on / off       = explicit override either way.
+KYRO_DOCS: str = os.getenv("KYRO_DOCS", "auto").strip().lower()
+# Allowed browser origins for CORS (comma-separated). Local frontend only by
+# default; production sets the deployed frontend origin(s).
+CORS_ORIGINS: list[str] = [
+    o.strip()
+    for o in os.getenv("CORS_ORIGINS", "http://localhost:3000").split(",")
+    if o.strip()
+]
+
 # --- Data stores -----------------------------------------------------------
 # NOTE: host port 5432 belongs to an existing native PostgreSQL that KYRO does
 # not own; KYRO's own cluster publishes on 5433 (see infra/docker-compose.yml).
@@ -88,3 +101,12 @@ SYNC_SUPERVISOR_INTERVAL_S: float = _float("SYNC_SUPERVISOR_INTERVAL_S", 5.0)
 QUERY_TOP_K: int = _int("QUERY_TOP_K", 8)
 QUERY_CONTEXT_MAX_CHARS: int = _int("QUERY_CONTEXT_MAX_CHARS", 6000)
 QUERY_PATCH_MAX_CHARS: int = _int("QUERY_PATCH_MAX_CHARS", 1500)
+
+# --- Abuse controls (security audit remediation) ---------------------------
+# Per-user fixed-window rate limits (requests per minute, 0 disables).
+# Enforced in-process per API worker; see app/security/ratelimit.py.
+RATE_LIMIT_QUERY_PER_MIN: int = _int("RATE_LIMIT_QUERY_PER_MIN", 60)
+RATE_LIMIT_RESYNC_PER_MIN: int = _int("RATE_LIMIT_RESYNC_PER_MIN", 10)
+# Upper bound on question length (LLM cost control; enforced by request
+# validation with 422 before the handler runs).
+QUERY_MAX_QUESTION_CHARS: int = _int("QUERY_MAX_QUESTION_CHARS", 2000)

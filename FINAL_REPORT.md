@@ -304,3 +304,59 @@ Batch breakdown (each exit 0):
 | Commit | Contents |
 |---|---|
 | *(this)* | §38: users, per-user auth, repository isolation, ownership hardening, migration `7c3f1a9d2e45`, 19 tests, README |
+
+
+---
+
+# 39 - Security remediation
+
+## 1. Status (audit groups → evidence)
+
+| Group | Scope | Evidence |
+|---|---|---|
+| A. Network exposure | Host ports bound to `127.0.0.1` only (infra: 5433/8100/9092/5678; app: **8000/3000 — gap found & fixed this session**) | Live matrix: LAN IP `10.182.63.222` refuses all 6 ports, loopback opens all 6 |
+| B. Frontend proxy | Path allowlist + CSRF origin guard, no admin/docs passthrough, API key stays server-side | `frontend/tests/` 10/10, lint+build clean; live battery: POST foreign origin 403, evil referer 403, `/api/users` & `/docs` 403, same-origin passes, GET read-only allowed |
+| C. Webhook integrity | n8n verifies `X-Hub-Signature-256` (pure-JS HMAC-SHA256, fail-closed before Kafka) | 7/7 local vectors; live: unsigned 401, wrong-sig 401, valid 200 |
+| D. Rate limiting & bounds | Fixed-window limiter (`resync` 10/min, `query` 60/min), query field caps | `test_security_remediation.py` 13/13; live: 11th resync 429 + `retry-after: 20` |
+| E. Docs & CORS | `/docs`, `/redoc`, `/openapi.json` gated (`KYRO_DOCS`: auto/on/off - key present => off), explicit CORS allowlist (`CORS_ORIGINS`) | `test_security_surface.py` 7/7; live: all three 404 with `KYRO_API_KEY` set |
+| F. CI / docs / 401 hygiene | pip-audit step (chromadb advisory ignored honestly), frontend `npm test`, README security surface, `.env.example` auth truth, n8n 401 body sanitized to static `{"error":"unauthorized"}` | Workflow JSON re-imported + published + active; live 401 bodies leak nothing |
+
+## 2. Regression (115/115) - batched by design
+
+Honest note: Docker Desktop's backend process dies ~2.5-5 min after every
+launch on this machine (unidentified external cause, not OOM - watcher data
+in `%TEMP%\kyro_watch.log`). Full-suite runs get killed mid-flight, so the
+suite is executed in health-gated batches, each fitting one lifetime window:
+
+| Batch | Tests | Result |
+|---|---|---|
+| `test_security_remediation + test_security_surface` | 20 | 20 passed |
+| `test_events_schema + test_github_client` | 15 | 15 passed |
+| `test_user_auth` | 19 | 19 passed |
+| `test_query_api` | 17 | 17 passed |
+| `test_persistence + test_processor_idempotency` | 18 | 18 passed |
+| `test_backfill_service + test_sync_manager` | 20 | 20 passed |
+| `test_worker_kafka + test_e2e_sync` | 6 | 6 passed (attempt 2; attempt 1 hit an engine death at 146 s) |
+| **Total** | **115** | **0 failed** (95 baseline + 13 remediation + 7 surface) |
+
+Gates: `ruff check` clean · `pyright` 0 errors · frontend `npm test` 10/10 ·
+`npm run lint` clean · `npm run build` succeeded.
+
+## 3. Live end-to-end (this session, real stack)
+
+- Signed webhook -> n8n -> Kafka -> worker -> PostgreSQL: delivery
+  `44744812-...` accepted (200), worker `event_deferred`, row in
+  `ingestion_events` (no schema change; data ownership untouched).
+- Rate limit: `POST /api/repositories/999999999/resync` x13 -> 10x404 then
+  429 + `retry-after: 20` (nonexistent repo => no side effects).
+- Docs gating: `/docs`, `/openapi.json`, `/redoc` -> 404 with key present.
+- Auth: no key -> 401, key -> 200 on `/api/repositories`.
+- Port matrix: all 6 published ports refused on LAN IP, open on loopback.
+
+## 4. Honest limitations (unchanged)
+
+- chromadb 1.5.9 pre-auth RCE (CVE-2026-45829 / PYSEC-2026-311) has no fixed
+  release: mitigated by loopback-only binding + network policy, documented in
+  README, and pip-audit skips exactly these five advisory IDs.
+- The Docker Desktop death cycle is environmental; CI (GitHub Actions) runs
+  the full suite normally in one shot.

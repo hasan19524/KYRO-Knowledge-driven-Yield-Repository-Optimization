@@ -51,7 +51,8 @@ services:
         echo "[kyro-migrate] OK: schema at head"
     restart: "no"
     networks:
-      - kyro-network
+      # Needs PostgreSQL only (kyro-data); no API-facing traffic.
+      - kyro-data
 
   kyro-backend:
     build:
@@ -73,9 +74,12 @@ services:
       # ~80MB ONNX model; keep it across rebuilds or every deploy pays it.
       - kyro-chroma-model-cache:/root/.cache/chroma
     ports:
-      - "8000:8000"
+      # SECURITY: bound to 127.0.0.1 only - never LAN/Internet (see infra/).
+      - "127.0.0.1:8000:8000"
     networks:
+      # kyro-network: frontend proxy -> API; kyro-data: PG/Chroma/Kafka.
       - kyro-network
+      - kyro-data
     depends_on:
       kyro-migrate:
         condition: service_completed_successfully
@@ -111,7 +115,8 @@ services:
     volumes:
       - kyro-chroma-model-cache:/root/.cache/chroma
     networks:
-      - kyro-network
+      # Data plane only: nothing on kyro-network needs to reach the worker.
+      - kyro-data
     depends_on:
       kyro-migrate:
         condition: service_completed_successfully
@@ -129,8 +134,10 @@ services:
       # Service DNS — Docker names never appear in client-bundled JS.
       KYRO_BACKEND_URL: http://kyro-backend:8000
     ports:
-      - "3000:3000"
+      # SECURITY: bound to 127.0.0.1 only - never LAN/Internet (see infra/).
+      - "127.0.0.1:3000:3000"
     networks:
+      # API network ONLY: the frontend must have no route to PG/Chroma/Kafka/n8n.
       - kyro-network
     depends_on:
       - kyro-backend
@@ -151,6 +158,9 @@ networks:
   kyro-network:
     external: true
     name: kyro-network
+  kyro-data:
+    external: true
+    name: kyro-data
 
 volumes:
   kyro-chroma-model-cache:
