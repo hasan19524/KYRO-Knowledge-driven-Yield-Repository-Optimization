@@ -6,6 +6,7 @@ import ChatHistory from "./ChatHistory";
 import RepositorySection, { RepositorySummary } from "./RepositorySection";
 import UserProfile from "./UserProfile";
 import { Chat } from "@/lib/storage";
+import { AuthUser } from "@/lib/auth";
 
 interface SidebarProps {
   chats: Chat[];
@@ -17,6 +18,10 @@ interface SidebarProps {
   onSelectChat: (id: string) => void;
   onDeleteChat: (id: string) => void;
   onSelectRepository: (repo: RepositorySummary) => void;
+  /** Forwarded to RepositorySection: fresh repo list after every poll. */
+  onRepositoriesLoaded: (repos: RepositorySummary[]) => void;
+  user: AuthUser | null;
+  onLogout: () => void;
 }
 
 export default function Sidebar({
@@ -29,6 +34,9 @@ export default function Sidebar({
   onSelectChat,
   onDeleteChat,
   onSelectRepository,
+  onRepositoriesLoaded,
+  user,
+  onLogout,
 }: SidebarProps) {
   const [searchQuery, setSearchQuery] = useState("");
 
@@ -42,8 +50,8 @@ export default function Sidebar({
     <div
       className="flex h-full flex-col border-r"
       style={{
-        background: "#0b0d12",
-        borderColor: "rgba(255,255,255,0.08)",
+        background: "var(--kyro-surface)",
+        borderColor: "var(--kyro-border)",
         width: "100%",
       }}
     >
@@ -71,8 +79,9 @@ export default function Sidebar({
           <RepositorySection
             selectedId={selectedRepositoryId}
             onSelect={onSelectRepository}
+            onRepositoriesLoaded={onRepositoriesLoaded}
           />
-          <UserProfile />
+          <UserProfile user={user} onLogout={onLogout} />
         </>
       )}
     </div>

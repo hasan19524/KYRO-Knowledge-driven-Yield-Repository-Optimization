@@ -135,7 +135,9 @@ services:
       KYRO_BACKEND_URL: http://kyro-backend:8000
     ports:
       # SECURITY: bound to 127.0.0.1 only - never LAN/Internet (see infra/).
-      - "127.0.0.1:3000:3000"
+      # Host 3001: a local watchdog on this machine reaps whatever holds host
+      # :3000. Container stays :3000 internally (Dockerfile PORT + healthcheck).
+      - "127.0.0.1:3001:3000"
     networks:
       # API network ONLY: the frontend must have no route to PG/Chroma/Kafka/n8n.
       - kyro-network

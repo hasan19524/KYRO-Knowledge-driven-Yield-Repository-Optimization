@@ -1,51 +1,81 @@
 "use client";
 
+// Functional repository list (main KYRO: fetch /backend/api/repositories,
+// selection, status, 5s polling) re-skinned with Lubna's design tokens.
+// The "+ Connect" button opens the GitHub repo picker (Sign in with
+// GitHub flow) inline below this list.
+
 import { useCallback, useEffect, useState } from "react";
-import { Folder } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { Folder, Plus } from "lucide-react";
+import { isSessionExpired } from "@/lib/auth";
+import GithubRepoPicker from "./GithubRepoPicker";
 
 export interface RepositorySummary {
   github_repository_id: number;
   full_name: string;
   status: string;
   deferred_events?: number;
+  // Timing/status detail the backend snapshot already returns — surfaced for
+  // the indexing wait screen (live elapsed clock, auto-dismiss on READY).
+  sync_started_at?: string | null;
+  sync_completed_at?: string | null;
+  sync_running?: boolean;
+  last_error?: string | null;
 }
 
 interface RepositorySectionProps {
   selectedId: number | null;
   onSelect: (repo: RepositorySummary) => void;
+  /** Reports each successful poll so AppShell can keep its selected snapshot fresh. */
+  onRepositoriesLoaded?: (repos: RepositorySummary[]) => void;
 }
 
 const STATUS_COLORS: Record<string, string> = {
-  READY: "#22c55e",
-  SYNCING: "#f59e0b",
-  SYNC_FAILED: "#ef4444",
-  ACCESS_REVOKED: "#ef4444",
+  READY: "var(--kyro-success)",
+  SYNCING: "var(--kyro-warning)",
+  SYNC_FAILED: "var(--kyro-error)",
+  ACCESS_REVOKED: "var(--kyro-error)",
 };
 
 function statusColor(status: string): string {
-  return STATUS_COLORS[status] ?? "#626977";
+  return STATUS_COLORS[status] ?? "var(--kyro-text-muted)";
 }
 
 export default function RepositorySection({
   selectedId,
   onSelect,
+  onRepositoriesLoaded,
 }: RepositorySectionProps) {
+  const router = useRouter();
   const [repos, setRepos] = useState<RepositorySummary[] | null>(null);
   const [unreachable, setUnreachable] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(false);
 
   const load = useCallback(async () => {
     try {
       const res = await fetch("/backend/api/repositories", {
         cache: "no-store",
       });
+      if (isSessionExpired(res)) {
+        // A real 401 means the session is gone — route through login.
+        // (5xx and network failures fall through to the offline state below;
+        // they are NOT authentication failures.)
+        router.replace("/login");
+        return;
+      }
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data: unknown = await res.json();
-      setRepos(Array.isArray(data) ? (data as RepositorySummary[]) : []);
+      const parsed = Array.isArray(data) ? (data as RepositorySummary[]) : [];
+      setRepos(parsed);
       setUnreachable(false);
+      // Lift each fresh poll so AppShell's selected-repo snapshot tracks
+      // SYNCING -> READY (this is what auto-dismisses the indexing panel).
+      onRepositoriesLoaded?.(parsed);
     } catch {
       setUnreachable(true);
     }
-  }, []);
+  }, [router, onRepositoriesLoaded]);
 
   useEffect(() => {
     // load() only setStates after its fetch resolves (never synchronously);
@@ -58,40 +88,52 @@ export default function RepositorySection({
 
   return (
     <div
-      className="mx-3 mb-2 rounded-lg px-3 py-3"
+      className="mx-3 mb-3 rounded-[10px] px-3 py-3"
       style={{
-        background: "#12151c",
-        border: "1px solid rgba(255,255,255,0.08)",
+        background: "var(--kyro-card)",
+        border: "1px solid var(--kyro-border)",
       }}
     >
       <div className="mb-2.5 flex items-center justify-between">
         <span
-          className="text-[11px] font-medium"
-          style={{ color: "#626977" }}
+          className="kyro-overline"
+          style={{ color: "var(--kyro-accent-hover)" }}
         >
           Repositories
         </span>
-        {unreachable && (
-          <span className="text-[10px]" style={{ color: "#ef4444" }}>
-            backend offline
-          </span>
-        )}
+        <div className="flex items-center gap-2">
+          {unreachable && (
+            <span className="text-[10px]" style={{ color: "var(--kyro-error)" }}>
+              backend offline
+            </span>
+          )}
+          <button
+            type="button"
+            onClick={() => setPickerOpen((open) => !open)}
+            className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-medium transition-opacity hover:opacity-80"
+            style={{ color: "var(--kyro-accent-hover)" }}
+            aria-expanded={pickerOpen}
+          >
+            <Plus className="h-3 w-3" aria-hidden="true" />
+            Connect
+          </button>
+        </div>
       </div>
 
       {repos === null && !unreachable && (
-        <div className="text-[12px]" style={{ color: "#626977" }}>
+        <div className="text-[12px]" style={{ color: "var(--kyro-text-muted)" }}>
           Loading...
         </div>
       )}
 
       {repos !== null && repos.length === 0 && !unreachable && (
-        <div className="text-[12px]" style={{ color: "#626977" }}>
+        <div className="text-[12px]" style={{ color: "var(--kyro-text-muted)" }}>
           No repositories yet
         </div>
       )}
 
       {repos !== null && repos.length === 0 && unreachable && (
-        <div className="text-[12px]" style={{ color: "#8f96a3" }}>
+        <div className="text-[12px]" style={{ color: "var(--kyro-error)" }}>
           Backend unreachable
         </div>
       )}
@@ -106,9 +148,9 @@ export default function RepositorySection({
               onClick={() => onSelect(repo)}
               className="flex w-full items-center gap-2.5 rounded-md px-1.5 py-1.5 text-left transition-colors"
               style={{
-                background: selected ? "#1a1e27" : "transparent",
+                background: selected ? "var(--kyro-card-active)" : "transparent",
                 border: selected
-                  ? "1px solid rgba(255,255,255,0.10)"
+                  ? "1px solid var(--kyro-border-hover)"
                   : "1px solid transparent",
               }}
               title={repo.full_name}
@@ -116,20 +158,23 @@ export default function RepositorySection({
               <div
                 className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-md"
                 style={{
-                  background: "#1a1e27",
-                  border: "1px solid rgba(255,255,255,0.08)",
+                  background: "var(--kyro-card-hover)",
+                  border: "1px solid var(--kyro-border)",
                 }}
               >
-                <Folder className="h-3.5 w-3.5" style={{ color: "#8f96a3" }} />
+                <Folder
+                  className="h-3.5 w-3.5"
+                  style={{ color: "var(--kyro-text-muted)" }}
+                />
               </div>
               <div className="min-w-0 flex-1">
                 <div
                   className="truncate text-[13px] font-medium"
-                  style={{ color: "#f5f5f5" }}
+                  style={{ color: "var(--kyro-text)" }}
                 >
                   {repo.full_name}
                 </div>
-                <div className="text-[11px]" style={{ color: "#626977" }}>
+                <div className="text-[11px]" style={{ color: "var(--kyro-text-muted)" }}>
                   {repo.status === "SYNCING" && "Synchronizing..."}
                   {repo.status === "READY" && "Ready"}
                   {repo.status === "SYNC_FAILED" && "Sync failed — resync required"}
@@ -147,6 +192,13 @@ export default function RepositorySection({
           );
         })}
       </div>
+
+      {pickerOpen && (
+        <GithubRepoPicker
+          onClose={() => setPickerOpen(false)}
+          onConnected={load}
+        />
+      )}
     </div>
   );
 }

@@ -321,6 +321,69 @@ def test_mark_failure_does_not_unfail_processed_repo_state(processor_env):
     assert repo.last_error == "boom"
 
 
+def test_successful_redelivery_recovers_sync_failed_repo(processor_env):
+    """A repo stuck in SYNC_FAILED is revived by a successful redelivery (P2-3).
+
+    A transient failure (retries exhausted / outage) marks the repo SYNC_FAILED
+    and leaves the failing offset uncommitted, so the event is redelivered.
+    When it applies cleanly the repo must re-enter the normal SYNCING state so
+    the supervisor can resume it — it must not stay stuck forever. Readiness is
+    deliberately NOT set here: only SyncManager._try_finalize promotes
+    SYNCING -> READY, and only once backfill is genuinely complete.
+    """
+    fake = processor_env.fake
+    fake.push("init", {"a.py": "1\n"})
+    evt = build_backfill_events(fake)[0]
+
+    # Simulate the transient failure: retries exhausted -> repo SYNC_FAILED,
+    # event row FAILED, offset never committed (so it redelivers on restart).
+    processor_env.processor.mark_failure(
+        json.dumps(evt).encode("utf-8"),
+        "transient_chroma_outage",
+    )
+    assert repo_row(processor_env.db, 1395956448).status == (
+        RepositoryStatus.SYNC_FAILED.value
+    )
+
+    # Redelivery after the outage clears: FAILED rows are not in the
+    # duplicate-skip set, so it is genuinely re-processed and now succeeds.
+    outcome = apply_event(processor_env.processor, evt, offset=1)
+    assert outcome == HandleOutcome.PROCESSED
+
+    repo = repo_row(processor_env.db, 1395956448)
+    assert repo.status == RepositoryStatus.SYNCING.value  # not stuck
+    assert _commit_count(processor_env.db) == 1
+
+
+def test_redelivery_does_not_mark_incomplete_repo_ready(processor_env):
+    """Recovery restores SYNCING (not READY) until backfill truly completes.
+
+    _try_finalize is the only place READY is ever set, and only when
+    published == synced == head with zero deferred. A recovered repo that still
+    has unpublished commits must remain SYNCING so the supervisor finishes the
+    job — a single successful redelivery must not mark it READY prematurely.
+    """
+    fake = processor_env.fake
+    fake.push("init", {"a.py": "1\n"})
+    fake.push("second", {"b.py": "2\n"})
+    events = build_backfill_events(fake)
+    assert len(events) >= 2  # two commits -> head is ahead after one apply
+
+    processor_env.processor.mark_failure(json.dumps(events[0]).encode("utf-8"), "boom")
+    assert repo_row(processor_env.db, 1395956448).status == (
+        RepositoryStatus.SYNC_FAILED.value
+    )
+
+    # Redeliver ONLY the first commit: ingestion is still incomplete.
+    assert (
+        apply_event(processor_env.processor, events[0], offset=1).value == "processed"
+    )
+
+    repo = repo_row(processor_env.db, 1395956448)
+    assert repo.status == RepositoryStatus.SYNCING.value  # back in flow, not READY
+    assert _commit_count(processor_env.db) == 1  # second commit still pending
+
+
 def test_invalid_payload_recorded_never_applied(processor_env):
     outcome = processor_env.processor.handle_raw(
         b"this is not json",

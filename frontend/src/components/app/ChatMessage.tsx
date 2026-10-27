@@ -1,7 +1,8 @@
 "use client";
 
-import { Sparkles, Copy, Check } from "lucide-react";
+import { Copy, Check } from "lucide-react";
 import { useState } from "react";
+import KyroLogo from "./KyroLogo";
 import { ChatMessage } from "@/lib/storage";
 
 interface ChatMessageProps {
@@ -18,27 +19,27 @@ function CodeBlock({ language, children }: { language?: string; children: string
   };
 
   return (
-    <div className="group relative my-3 rounded-lg overflow-hidden" style={{ background: "#0b0d12" }}>
+    <div className="group relative my-3 rounded-lg overflow-hidden" style={{ background: "var(--kyro-surface)" }}>
       <div
         className="flex items-center justify-between px-4 py-2"
-        style={{ borderBottom: "1px solid rgba(255,255,255,0.06)" }}
+        style={{ borderBottom: "1px solid var(--kyro-border-subtle)" }}
       >
-        <span className="text-[11px]" style={{ color: "#626977" }}>
+        <span className="text-[11px]" style={{ color: "var(--kyro-text-muted)" }}>
           {language || "code"}
         </span>
         <button
           onClick={handleCopy}
           className="flex items-center gap-1 rounded px-2 py-0.5 text-[11px] transition-colors opacity-0 group-hover:opacity-100"
-          style={{ color: "#626977" }}
-          onMouseEnter={(e) => (e.currentTarget.style.color = "#8f96a3")}
-          onMouseLeave={(e) => (e.currentTarget.style.color = "#626977")}
+          style={{ color: "var(--kyro-text-muted)" }}
+          onMouseEnter={(e) => (e.currentTarget.style.color = "var(--kyro-text-secondary)")}
+          onMouseLeave={(e) => (e.currentTarget.style.color = "var(--kyro-text-muted)")}
         >
           {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
           {copied ? "Copied" : "Copy"}
         </button>
       </div>
       <pre className="overflow-x-auto p-4 text-[13px] leading-relaxed">
-        <code style={{ color: "#c8cdd6", fontFamily: "var(--font-geist-mono), ui-monospace, monospace" }}>
+        <code style={{ color: "var(--kyro-text-secondary)", fontFamily: "var(--font-geist-mono), ui-monospace, monospace" }}>
           {children}
         </code>
       </pre>
@@ -76,7 +77,7 @@ function parseMarkdown(text: string): React.ReactNode[] {
         <h3
           key={parts.length}
           className="mt-4 mb-2 text-[15px] font-semibold"
-          style={{ color: "#f5f5f5" }}
+          style={{ color: "var(--kyro-text)" }}
         >
           {line.slice(4)}
         </h3>
@@ -90,7 +91,7 @@ function parseMarkdown(text: string): React.ReactNode[] {
         <h2
           key={parts.length}
           className="mt-5 mb-2 text-[17px] font-semibold"
-          style={{ color: "#f5f5f5" }}
+          style={{ color: "var(--kyro-text)" }}
         >
           {line.slice(3)}
         </h2>
@@ -103,8 +104,8 @@ function parseMarkdown(text: string): React.ReactNode[] {
       parts.push(
         <h1
           key={parts.length}
-          className="mt-6 mb-3 text-[20px] font-bold"
-          style={{ color: "#f5f5f5" }}
+          className="mt-6 mb-3 text-[20px] font-semibold"
+          style={{ color: "var(--kyro-text)" }}
         >
           {line.slice(2)}
         </h1>
@@ -122,7 +123,7 @@ function parseMarkdown(text: string): React.ReactNode[] {
       parts.push(
         <ul key={parts.length} className="my-2 list-disc pl-5 space-y-1">
           {listItems.map((item, idx) => (
-            <li key={idx} className="text-[14px] leading-relaxed" style={{ color: "#c8cdd6" }}>
+            <li key={idx} className="text-[14px] leading-relaxed" style={{ color: "var(--kyro-text-secondary)" }}>
               {renderInline(item)}
             </li>
           ))}
@@ -140,7 +141,7 @@ function parseMarkdown(text: string): React.ReactNode[] {
       parts.push(
         <ol key={parts.length} className="my-2 list-decimal pl-5 space-y-1">
           {listItems.map((item, idx) => (
-            <li key={idx} className="text-[14px] leading-relaxed" style={{ color: "#c8cdd6" }}>
+            <li key={idx} className="text-[14px] leading-relaxed" style={{ color: "var(--kyro-text-secondary)" }}>
               {renderInline(item)}
             </li>
           ))}
@@ -156,7 +157,7 @@ function parseMarkdown(text: string): React.ReactNode[] {
     }
 
     parts.push(
-      <p key={parts.length} className="my-1 text-[14px] leading-relaxed" style={{ color: "#c8cdd6" }}>
+      <p key={parts.length} className="my-1 text-[14px] leading-relaxed" style={{ color: "var(--kyro-text-secondary)" }}>
         {renderInline(line)}
       </p>
     );
@@ -182,14 +183,14 @@ function renderInline(text: string): React.ReactNode {
         <code
           key={key++}
           className="rounded px-1.5 py-0.5 text-[13px]"
-          style={{ background: "#1a1e27", color: "#c8cdd6" }}
+          style={{ background: "var(--kyro-card-hover)", color: "var(--kyro-text-secondary)" }}
         >
           {match[1]}
         </code>
       );
     } else if (match[2]) {
       parts.push(
-        <strong key={key++} className="font-semibold" style={{ color: "#f5f5f5" }}>
+        <strong key={key++} className="font-semibold" style={{ color: "var(--kyro-text)" }}>
           {match[2]}
         </strong>
       );
@@ -216,29 +217,21 @@ export default function ChatMessageComponent({ message }: ChatMessageProps) {
   return (
     <div className={`animate-fade-in will-animate flex gap-3 ${isUser ? "justify-end" : "justify-start"}`}>
       {!isUser && (
-        <div
-          className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full"
-          style={{
-            background: "#12151c",
-            border: "1px solid rgba(255,255,255,0.08)",
-          }}
-        >
-          <Sparkles className="h-3.5 w-3.5" style={{ color: "#626977" }} />
-        </div>
+        <KyroLogo size={28} className="mt-0.5" />
       )}
 
       <div
-        className={`max-w-[75%] rounded-xl px-4 py-3 ${
+        className={`max-w-[75%] rounded-[10px] px-4 py-3 ${
           isUser ? "text-[14px]" : ""
         }`}
         style={
           isUser
             ? {
-                background: "#1a1e27",
-                border: "1px solid rgba(255,255,255,0.08)",
-                color: "#f5f5f5",
+                background: "var(--kyro-accent-soft)",
+                border: "1px solid var(--kyro-sage-soft)",
+                color: "var(--kyro-text)",
               }
-            : { color: "#c8cdd6" }
+            : { color: "var(--kyro-text-secondary)" }
         }
       >
         {isUser ? (

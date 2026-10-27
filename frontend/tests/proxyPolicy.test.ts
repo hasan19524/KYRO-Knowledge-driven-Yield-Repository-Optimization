@@ -25,6 +25,28 @@ describe("proxy path allowlist", () => {
     assert.equal(isAllowedPath(["api", "repositories", "900001", "resync"]), true);
   });
 
+  it("allows the account session endpoints the auth pages need", () => {
+    assert.equal(isAllowedPath(["api", "auth", "register"]), true);
+    assert.equal(isAllowedPath(["api", "auth", "login"]), true);
+    assert.equal(isAllowedPath(["api", "auth", "logout"]), true);
+    assert.equal(isAllowedPath(["api", "auth", "me"]), true);
+  });
+
+  it("allows the GitHub OAuth redirect flow and repo picker", () => {
+    assert.equal(isAllowedPath(["api", "auth", "github", "start"]), true);
+    assert.equal(isAllowedPath(["api", "auth", "github", "callback"]), true);
+    assert.equal(isAllowedPath(["api", "github", "repos"]), true);
+  });
+
+  it("rejects unknown GitHub subpaths", () => {
+    assert.equal(isAllowedPath(["api", "auth", "github"]), false);
+    assert.equal(isAllowedPath(["api", "auth", "github", "token"]), false);
+    assert.equal(isAllowedPath(["api", "auth", "github", "start", "x"]), false);
+    assert.equal(isAllowedPath(["api", "github"]), false);
+    assert.equal(isAllowedPath(["api", "github", "repos", "x"]), false);
+    assert.equal(isAllowedPath(["api", "github", "app"]), false);
+  });
+
   it("rejects admin and unrelated backend paths", () => {
     assert.equal(isAllowedPath(["api", "users"]), false);
     assert.equal(isAllowedPath(["api", "users", "2"]), false);
@@ -35,6 +57,13 @@ describe("proxy path allowlist", () => {
     assert.equal(isAllowedPath(["openapi.json"]), false);
     assert.equal(isAllowedPath(["api"]), false);
     assert.equal(isAllowedPath([]), false);
+  });
+
+  it("rejects malformed or unknown auth paths", () => {
+    assert.equal(isAllowedPath(["api", "auth"]), false);
+    assert.equal(isAllowedPath(["api", "auth", "sessions"]), false);
+    assert.equal(isAllowedPath(["api", "auth", "me", "extra"]), false);
+    assert.equal(isAllowedPath(["api", "auth", "register", "x"]), false);
   });
 
   it("rejects malformed repository paths", () => {

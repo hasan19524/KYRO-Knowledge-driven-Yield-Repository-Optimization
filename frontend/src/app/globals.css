@@ -1,22 +1,93 @@
 @import "tailwindcss";
 
+/* ------------------------------------------------------------------
+   KYRO design tokens — Black + Deep Green + Bone
+   Source of truth: refrence/colors.md
+------------------------------------------------------------------ */
+
+:root,
+[data-theme="dark"] {
+  /* Dark mode (default) */
+  --kyro-bg: #090a08;
+  --kyro-surface: #0f120e;
+  --kyro-card: #151813;
+  --kyro-card-hover: #1a1e18;
+  --kyro-card-active: #1f241d;
+  --kyro-border: #292e28;
+  --kyro-border-subtle: rgba(234, 231, 220, 0.07);
+  --kyro-border-hover: rgba(234, 231, 220, 0.16);
+
+  --kyro-accent: #304d3a;
+  --kyro-accent-hover: #5f795f;
+  --kyro-accent-soft: rgba(48, 77, 58, 0.24);
+  --kyro-sage-soft: rgba(95, 121, 95, 0.2);
+
+  --kyro-text: #eae7dc;
+  --kyro-text-secondary: rgba(234, 231, 220, 0.72);
+  --kyro-text-muted: #9a9e95;
+  --kyro-text-subtle: rgba(234, 231, 220, 0.42);
+  --kyro-text-inverse: #090a08;
+
+  --kyro-overlay: rgba(9, 10, 8, 0.72);
+  --kyro-success: #5f795f;
+  --kyro-warning: #9a8b5e;
+  --kyro-error: #9e5f52;
+
+  color-scheme: dark;
+}
+
+[data-theme="light"] {
+  /* Light mode */
+  --kyro-bg: #f3f1e9;
+  --kyro-surface: #e9e7de;
+  --kyro-card: #ffffff;
+  --kyro-card-hover: #fbfaf6;
+  --kyro-card-active: #f1efe6;
+  --kyro-border: #d9d9d0;
+  --kyro-border-subtle: rgba(24, 24, 21, 0.08);
+  --kyro-border-hover: rgba(24, 24, 21, 0.18);
+
+  --kyro-accent: #304d3a;
+  --kyro-accent-hover: #5f795f;
+  --kyro-accent-soft: rgba(48, 77, 58, 0.12);
+  --kyro-sage-soft: rgba(95, 121, 95, 0.16);
+
+  --kyro-text: #181815;
+  --kyro-text-secondary: #3a3d38;
+  --kyro-text-muted: #686d65;
+  --kyro-text-subtle: rgba(24, 24, 21, 0.45);
+  --kyro-text-inverse: #eae7dc;
+
+  --kyro-overlay: rgba(24, 24, 21, 0.4);
+  --kyro-success: #5f795f;
+  --kyro-warning: #8a7c50;
+  --kyro-error: #9e5f52;
+
+  color-scheme: light;
+}
+
 @theme inline {
-  --color-background: #08090b;
-  --color-surface: #12151c;
-  --color-surface-hover: #1a1e27;
-  --color-surface-active: #22262f;
-  --color-border: rgba(255,255,255,0.08);
-  --color-border-hover: rgba(255,255,255,0.12);
-  --color-border-focus: rgba(255,255,255,0.16);
-  --color-text: #f5f5f5;
-  --color-text-secondary: #8f96a3;
-  --color-text-muted: #626977;
-  --color-text-subtle: #4a5060;
-  --color-accent: #c8cdd6;
-  --color-success: #22c55e;
-  --color-error: #ef4444;
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --color-background: var(--kyro-bg);
+  --color-surface: var(--kyro-surface);
+  --color-card: var(--kyro-card);
+  --color-card-hover: var(--kyro-card-hover);
+  --color-border: var(--kyro-border);
+  --color-border-subtle: var(--kyro-border-subtle);
+  --color-border-hover: var(--kyro-border-hover);
+  --color-accent: var(--kyro-accent);
+  --color-accent-hover: var(--kyro-accent-hover);
+  --color-accent-soft: var(--kyro-accent-soft);
+  --color-text: var(--kyro-text);
+  --color-text-secondary: var(--kyro-text-secondary);
+  --color-text-muted: var(--kyro-text-muted);
+  --color-text-subtle: var(--kyro-text-subtle);
+  --color-text-inverse: var(--kyro-text-inverse);
+  --color-success: var(--kyro-success);
+  --color-error: var(--kyro-error);
+  --font-sans: var(--font-inter), system-ui, -apple-system, "Segoe UI", Roboto,
+    Helvetica, Arial, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, SFMono-Regular, Menlo,
+    monospace;
 }
 
 * {
@@ -31,28 +102,32 @@ html {
 
 body {
   min-height: 100%;
-  background: #08090b;
-  color: #f5f5f5;
-  font-family: var(--font-sans), system-ui, -apple-system, sans-serif;
+  background: var(--kyro-bg);
+  color: var(--kyro-text);
+  font-family: var(--font-inter), system-ui, -apple-system, "Segoe UI", Roboto,
+    Helvetica, Arial, sans-serif;
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  letter-spacing: -0.006em;
 }
 
 :focus-visible {
-  outline: 2px solid rgba(255,255,255,0.16);
+  outline: 2px solid var(--kyro-accent-hover);
   outline-offset: 2px;
 }
 
 ::-webkit-scrollbar {
-  width: 5px;
+  width: 6px;
+  height: 6px;
 }
 ::-webkit-scrollbar-track {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: rgba(255,255,255,0.08);
+  background: var(--kyro-border);
   border-radius: 3px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(255,255,255,0.12);
+  background: var(--kyro-border-hover);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -67,7 +142,8 @@ body {
 }
 
 ::selection {
-  background: rgba(255, 255, 255, 0.12);
+  background: var(--kyro-accent-soft);
+  color: var(--kyro-text);
 }
 
 textarea {
@@ -79,7 +155,41 @@ textarea:focus {
 }
 
 ::placeholder {
-  color: #626977;
+  color: var(--kyro-text-muted);
+  opacity: 1;
+}
+
+/* Editorial overline label — refrence/typography.md */
+.kyro-overline {
+  font-size: 11px;
+  line-height: 1.3;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+/* ------------------------------------------------------------------
+   Logo variants — assets in /public/logo/ (transparent, never redrawn)
+   dark theme  -> /logo/kyro-logo-dark.svg
+   light theme -> /logo/kyro-logo-light.svg
+   Inactive variant is hidden via [data-theme] on <body>.
+------------------------------------------------------------------ */
+.kyro-logo {
+  display: block;
+  flex-shrink: 0;
+  object-fit: contain;
+  background: transparent;
+  border: 0;
+}
+
+/* Exactly one logo per theme: always hide the inactive variant, even if an
+   inline style ever sets display again. */
+[data-theme="dark"] .kyro-logo--light {
+  display: none !important;
+}
+
+[data-theme="light"] .kyro-logo--dark {
+  display: none !important;
 }
 
 @keyframes fade-in {
@@ -88,7 +198,7 @@ textarea:focus {
 }
 
 .animate-fade-in {
-  animation: fade-in 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  animation: fade-in 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
 .delay-100 { animation-delay: 100ms; }
@@ -106,4 +216,16 @@ textarea:focus {
 
 .animate-pulse {
   animation: pulse 1.4s ease-in-out infinite;
+}
+
+/* Sliding indeterminate bar for the indexing wait screen
+   (RepositoryStatusPanel). Fill is 30% wide: -100% parks it fully left of
+   its own width, 340% carries it past the right edge of the track. */
+@keyframes kyro-indeterminate {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(340%); }
+}
+
+.kyro-indeterminate {
+  animation: kyro-indeterminate 1.4s ease-in-out infinite;
 }

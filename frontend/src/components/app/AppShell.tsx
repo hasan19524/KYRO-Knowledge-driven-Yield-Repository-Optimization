@@ -1,11 +1,13 @@
 "use client";
 
 import { useState, useCallback, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import Sidebar from "./Sidebar";
 import MainChat from "./MainChat";
 import Topbar from "./Topbar";
 import { Chat, getAllChats, saveChat, createChat, addMessageToChat, deleteChat } from "@/lib/storage";
 import { RepositorySummary } from "./RepositorySection";
+import { AuthUser, isSessionExpired, logout } from "@/lib/auth";
 
 interface QueryReference {
   commit_sha: string | null;
@@ -17,6 +19,14 @@ interface QueryReference {
 interface QueryAnswer {
   answer: string;
   references: QueryReference[];
+}
+
+/** Thrown when a protected request returns a real 401 (session expired). */
+class SessionExpiredError extends Error {
+  constructor() {
+    super("Your session has expired. Please sign in again.");
+    this.name = "SessionExpiredError";
+  }
 }
 
 function formatReferences(refs: QueryReference[] | undefined): string {
@@ -42,6 +52,10 @@ async function askRepository(
   });
 
   const data: unknown = await res.json().catch(() => null);
+  if (res.status === 401) {
+    // Session expired mid-session — distinct from 5xx/backend failures.
+    throw new SessionExpiredError();
+  }
   if (!res.ok) {
     const detail = (data as { detail?: unknown } | null)?.detail;
     if (typeof detail === "string") throw new Error(detail);
@@ -54,13 +68,20 @@ async function askRepository(
   return data as QueryAnswer;
 }
 
-export default function AppShell() {
+export default function AppShell({ user }: { user: AuthUser | null }) {
+  const router = useRouter();
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [chats, setChats] = useState<Chat[]>([]);
   const [activeChatId, setActiveChatId] = useState<string | null>(null);
   const [selectedRepo, setSelectedRepo] = useState<RepositorySummary | null>(null);
   const [isMobile, setIsMobile] = useState(false);
+  const [resyncing, setResyncing] = useState(false);
+  // Keyed to its repo so a leftover error never shows for a different repo.
+  const [resyncError, setResyncError] = useState<{
+    repoId: number;
+    message: string;
+  } | null>(null);
 
   useEffect(() => {
     const check = () => setIsMobile(window.innerWidth < 768);
@@ -122,10 +143,16 @@ export default function AppShell() {
       const data = await askRepository(selectedRepo.github_repository_id, content);
       appendAssistant(data.answer + formatReferences(data.references));
     } catch (err) {
+      if (err instanceof SessionExpiredError) {
+        // Clear invalid client-visible state and route through login.
+        await logout();
+        router.replace("/login");
+        return;
+      }
       const errorMsg = err instanceof Error ? err.message : "An error occurred";
       appendAssistant(`Error: ${errorMsg}`);
     }
-  }, [activeChatId, chats, selectedRepo]);
+  }, [activeChatId, chats, selectedRepo, router]);
 
   const handleDeleteChat = useCallback((id: string) => {
     deleteChat(id);
@@ -133,11 +160,89 @@ export default function AppShell() {
     if (activeChatId === id) setActiveChatId(null);
   }, [activeChatId]);
 
+  const handleRepositoriesLoaded = useCallback((repos: RepositorySummary[]) => {
+    // The sidebar polls every 5s; keep the selected snapshot in lockstep so
+    // the indexing panel auto-dismisses when the repo flips to READY.
+    setSelectedRepo((prev) => {
+      if (!prev) return prev;
+      const fresh = repos.find(
+        (r) => r.github_repository_id === prev.github_repository_id
+      );
+      if (!fresh) return prev;
+      const unchanged =
+        fresh.status === prev.status &&
+        fresh.full_name === prev.full_name &&
+        fresh.sync_started_at === prev.sync_started_at &&
+        fresh.sync_running === prev.sync_running &&
+        fresh.last_error === prev.last_error &&
+        fresh.deferred_events === prev.deferred_events;
+      return unchanged ? prev : fresh;
+    });
+  }, []);
+
+  const handleResync = useCallback(async () => {
+    const repo = selectedRepo;
+    if (!repo || resyncing) return;
+    setResyncing(true);
+    setResyncError(null);
+    try {
+      const res = await fetch(
+        `/backend/api/repositories/${repo.github_repository_id}/resync`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ full: false }),
+        }
+      );
+      if (isSessionExpired(res)) {
+        await logout();
+        router.replace("/login");
+        return;
+      }
+      const data: unknown = await res.json().catch(() => null);
+      if (!res.ok) {
+        const detail = (data as { detail?: unknown } | null)?.detail;
+        throw new Error(
+          typeof detail === "string"
+            ? detail
+            : `Re-sync failed (HTTP ${res.status})`
+        );
+      }
+      // The 202 response is the fresh snapshot — flip the panel immediately;
+      // the sidebar's 5s poll keeps it correct from there.
+      if (data && typeof data === "object" && "status" in data) {
+        const snap = data as Partial<RepositorySummary>;
+        setSelectedRepo((prev) =>
+          prev
+            ? {
+                ...prev,
+                ...snap,
+                github_repository_id: prev.github_repository_id,
+              }
+            : prev
+        );
+      }
+    } catch (err) {
+      setResyncError({
+        repoId: repo.github_repository_id,
+        message: err instanceof Error ? err.message : "Re-sync request failed",
+      });
+    } finally {
+      setResyncing(false);
+    }
+  }, [selectedRepo, resyncing, router]);
+
+  const handleLogout = useCallback(async () => {
+    await logout();
+    router.replace("/login");
+  }, [router]);
+
   return (
-    <div className="flex h-screen w-full overflow-hidden" style={{ background: "#08090b" }}>
+    <div className="flex h-screen w-full overflow-hidden" style={{ background: "var(--kyro-bg)" }}>
       {isMobile && sidebarOpen && (
         <div
-          className="fixed inset-0 z-40 bg-black/60"
+          className="fixed inset-0 z-40"
+          style={{ background: "var(--kyro-overlay)" }}
           onClick={() => setSidebarOpen(false)}
         />
       )}
@@ -149,7 +254,7 @@ export default function AppShell() {
             : ""
         }`}
         style={{
-          width: sidebarCollapsed && !isMobile ? "60px" : "310px",
+          width: sidebarCollapsed && !isMobile ? "64px" : "264px",
         }}
       >
         <Sidebar
@@ -162,6 +267,9 @@ export default function AppShell() {
           onSelectChat={handleSelectChat}
           onDeleteChat={handleDeleteChat}
           onSelectRepository={setSelectedRepo}
+          onRepositoriesLoaded={handleRepositoriesLoaded}
+          user={user}
+          onLogout={handleLogout}
         />
       </div>
 
@@ -179,6 +287,15 @@ export default function AppShell() {
           activeChat={activeChat}
           onSendMessage={handleSendMessage}
           repositoryLabel={selectedRepo?.full_name ?? null}
+          repository={selectedRepo}
+          onResync={handleResync}
+          resyncing={resyncing}
+          resyncError={
+            resyncError &&
+            resyncError.repoId === selectedRepo?.github_repository_id
+              ? resyncError.message
+              : null
+          }
         />
       </div>
     </div>

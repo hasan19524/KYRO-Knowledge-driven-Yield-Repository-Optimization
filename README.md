@@ -53,14 +53,14 @@ powershell -ExecutionPolicy Bypass -File n8n\bootstrap.ps1
 docker compose -f app/docker-compose.yml up -d --build
 ```
 
-Open http://localhost:3000 — add a repository
+Open http://localhost:3001 — add a repository
 (`POST /api/repositories/onboard`), wait for `READY`, then ask questions.
 
 ### Ports
 
 | Service | Host port |
 |---|---|
-| Frontend | 3000 |
+| Frontend | 3001 |
 | FastAPI | 8000 |
 | n8n | 5678 |
 | PostgreSQL | 5433 |
@@ -107,6 +107,10 @@ including the data stores and n8n's editor/webhook.
 | `GET /api/repositories/{id}` | user key / shared key | One repository's snapshot (404 if not yours) |
 | `POST /api/repositories/{id}/resync` | user key / shared key | Re-enqueue backfill |
 | `POST /api/query` | user key / shared key | RAG question → `{answer, references[]}` with commit/file citations |
+| `POST /api/auth/register` | open (rate-limited) | Create an account (email + password, PBKDF2-hashed); returns a session token once |
+| `POST /api/auth/login` | open (rate-limited) | Uniform `401` for unknown email / wrong password / deactivated; returns a session token |
+| `POST /api/auth/logout` | session | Delete the session server-side (immediate invalidation) |
+| `GET /api/auth/me` | session | Current session identity (handle/email) |
 | `POST /api/users` | admin | Create a user; returns a one-time API key |
 | `GET /api/users`, `GET /api/users/{id}` | admin | List / inspect users (never exposes keys) |
 | `POST /api/users/{id}/rotate-key` | admin | Issue a new key (returned once) |
@@ -127,6 +131,23 @@ client-supplied user id is never trusted:
   existing frontend keeps working unchanged.
 - **No key configured** (dev mode) → same open behavior as before; requests
   act as the `default` user.
+- **Login session** (additive; `Authorization: Bearer kyro_sess_...`) → that
+  user's identity. Passwords are PBKDF2-HMAC-SHA256 (stdlib, per-user salt);
+  session tokens are `secrets`-generated and only their SHA-256 is stored in
+  `user_sessions`. Expiry is server-side (`AUTH_SESSION_TTL_HOURS`, default
+  7 days); logout deletes the row. Session failures are **terminal**: an
+  invalid/expired bearer always answers `401` and never falls back to
+  API-key auth or the dev-mode identity. New accounts get no admin rights,
+  no API key, and see only repositories they own. Login/register are
+  pre-auth rate limited per email (`RATE_LIMIT_LOGIN_PER_MIN` /
+  `RATE_LIMIT_REGISTER_PER_MIN`).
+
+The Next.js proxy manages the session cookie end-to-end: register/login move
+the token from the response body into an httpOnly `kyro_session` cookie
+(never visible to browser JS), every proxied call forwards it as
+`Authorization: Bearer` (which takes precedence over the injected service
+key), and logout clears it. `KYRO_COOKIE_SECURE=0` opts out of Secure
+cookies for plain-http local deployments; defaults are Secure in production.
 
 User management (`/api/users`) is admin-only: shared service key in
 production, open in dev mode. Keys are returned exactly once (issue/rotate);
@@ -150,7 +171,7 @@ repo, `503` retrieval failure, `502` LLM failure — messages surfaced verbatim.
 # Backend (Python 3.13 venv in backend/.venv)
 cd backend
 python -m pip install -r requirements.txt
-python -m pytest tests/ -q          # 115 tests (95 baseline + 20 security)
+python -m pytest tests/ -q          # 160 tests (115 baseline + 20 retrieval + 25 auth)
 python -m ruff check app tests alembic
 python -m pyright app tests alembic
 
@@ -158,6 +179,7 @@ python -m pyright app tests alembic
 cd frontend
 npm ci
 npm run lint
+npm test                            # proxy policy + auth path allowlist
 npm run build
 ```
 

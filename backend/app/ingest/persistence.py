@@ -332,6 +332,10 @@ def apply_payload(
 
         content_to_set: str | object | None
         blob_to_set: str | None = None
+        # Binary/undecodable file: a successful fetch returned no UTF-8
+        # text. The file EXISTS at the ref — it just has nothing to store
+        # in current_content and nothing to embed as a semantic chunk.
+        binary_no_text = False
         if attr.status == "deleted":
             content_to_set = None if update_current else _UNSET
             blob_to_set = attr.change.sha if attr.change else None
@@ -347,6 +351,11 @@ def apply_payload(
             )
             content_to_set = resolved.content
             blob_to_set = resolved.blob_sha
+            # source == "fetch" with no text = GitHub answered, the blob
+            # is just not decodable text (images, archives, ...). Other
+            # sources with no text (e.g. "none" after GitHubNotFound) keep
+            # the legacy tombstone behaviour.
+            binary_no_text = resolved.content is None and resolved.source == "fetch"
         else:
             content_to_set = _UNSET
 
@@ -356,6 +365,7 @@ def apply_payload(
             blob_sha=blob_to_set,
             guard_at=guard_at,
             commit_sha=ref or None,
+            deleted=False if binary_no_text else None,
         )
 
         # Renames must also retire the previous path.
@@ -413,6 +423,18 @@ def apply_payload(
         cb_default: CommitBlock = attr.commit
         cb_found = commit_blocks.get(attr.commit.sha)
         cb: CommitBlock = cb_found if cb_found is not None else cb_default
+        # Nothing textually indexable: binary files have no patch and no
+        # decodable content, so an IndexItem would embed a header-only
+        # document that matches every generic query and crowds real text
+        # hits out of the retrieval window.
+        patch_text = attr.change.patch if attr.change else None
+        if binary_no_text and not (patch_text and patch_text.strip()):
+            log.debug(
+                "index_skipped_binary path=%s repository_id=%d",
+                attr.path,
+                repo.github_repository_id,
+            )
+            continue
         result.index_items.append(
             IndexItem(
                 repository_pk=repo.id,
@@ -453,6 +475,7 @@ def _apply_file_state(
     blob_sha: str | None,
     guard_at: datetime,
     commit_sha: str | None,
+    deleted: bool | None = None,
 ) -> None:
     if not isinstance(content, _Unset):
         basis = file_row.current_content_commit_at
@@ -462,7 +485,11 @@ def _apply_file_state(
             file_row.current_content = content
             file_row.current_content_commit_sha = commit_sha
             file_row.current_content_commit_at = guard_at
-            file_row.is_deleted = content is None
+            # `content is None` normally means deletion, but a successful
+            # fetch of a binary/undecodable file also yields no text: that
+            # file EXISTS at the ref and must not be tombstoned (callers
+            # pass deleted=False for that case).
+            file_row.is_deleted = (content is None) if deleted is None else deleted
             if blob_sha:
                 file_row.blob_sha = blob_sha
 

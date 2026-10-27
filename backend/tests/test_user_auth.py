@@ -299,7 +299,7 @@ def test_db_level_fk_restrict_blocks_deleting_owner(owner_env):
 def test_migration_upgrade_downgrade_preserves_repository_data():
     """Full alembic cycle on an isolated database (non-destructive claim)."""
     backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    mig_url = "postgresql+psycopg://kyro:kyro@localhost:5433/kyro_mig_check"
+    mig_url = "postgresql+psycopg://kyro:kyro@127.0.0.1:5433/kyro_mig_check"
     admin = create_engine(ADMIN_DB_URL, isolation_level="AUTOCOMMIT")
     try:
         with admin.connect() as conn:
@@ -341,8 +341,12 @@ def test_migration_upgrade_downgrade_preserves_repository_data():
                     "'org', false, 'READY', now(), now())"
                 )
             )
-        # downgrade one revision, then upgrade again: data must survive.
-        alembic("downgrade", "-1")
+        # Cycle the last three revisions (head -> -3 -> head): repository
+        # data must survive, and re-running the ownership migration must
+        # re-claim pre-existing rows for the legacy identity. (Three steps
+        # so the cycle spans the github-identity, credentials/sessions AND
+        # ownership migrations; data tables are untouched by all three.)
+        alembic("downgrade", "-3")
         alembic("upgrade", "head")
 
         with probe.connect() as conn:

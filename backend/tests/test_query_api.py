@@ -21,9 +21,9 @@ from app.api.repositories import (
     SYNC_FAILED_MESSAGE,
     SYNCING_MESSAGE,
 )
-from app.db.models import Repository, RepositoryStatus
+from app.db.models import Commit, CommitFile, File, Repository, RepositoryStatus
 from app.github.backfill import BackfillService
-from app.ingest.indexer import IndexError_
+from app.ingest.indexer import IndexError_, QueryHit
 from app.ingest.processor import EventProcessor
 from app.main import create_app
 from app.state import AppState
@@ -226,6 +226,103 @@ def test_query_ready_with_empty_index_still_answers(api_env):
     assert data["references"] == []
     assert data["chunks_considered"] == 0
     assert "No indexed changes matched" in api_env.prompts[-1]
+
+
+def test_query_excludes_deleted_files_from_retrieval(api_env):
+    """Deleted files must not surface in current-code retrieval (P2-2).
+
+    PostgreSQL `files.is_deleted` is the source of truth; the query handler
+    passes those file ids to rank_hits as an exclusion set, so neither the
+    deletion marker nor any historical change of a deleted path can reach the
+    references or the LLM context — even when the deleted chunk is the single
+    nearest match.
+    """
+    from datetime import UTC, datetime
+
+    _seed_repo(api_env.db, RepositoryStatus.READY.value)
+    with api_env.db() as session, session.begin():
+        repo = session.scalar(
+            select(Repository).where(Repository.github_repository_id == GID)
+        )
+        assert repo is not None
+        commit = Commit(
+            repository_id=repo.id,
+            github_commit_sha="d" * 40,
+            message="seed",
+            committed_at=datetime.now(UTC),
+        )
+        session.add(commit)
+        session.flush()
+        live = File(repository_id=repo.id, path="live.py", is_deleted=False)
+        gone = File(repository_id=repo.id, path="gone.py", is_deleted=True)
+        session.add_all([live, gone])
+        session.flush()
+        session.add_all(
+            [
+                CommitFile(
+                    commit_id=commit.id,
+                    file_id=live.id,
+                    status="modified",
+                    additions=1,
+                    deletions=0,
+                    changes=1,
+                    patch="+live-current",
+                ),
+                CommitFile(
+                    commit_id=commit.id,
+                    file_id=gone.id,
+                    status="modified",
+                    additions=1,
+                    deletions=0,
+                    changes=1,
+                    patch="+gone-deleted",
+                ),
+            ]
+        )
+        commit_id, live_id, gone_id = commit.id, live.id, gone.id
+
+    class _FakeIndexer:
+        def search(self, *args, **kwargs):
+            # The DELETED chunk is the nearest hit; it must still be dropped.
+            return [
+                QueryHit(
+                    document="gone body",
+                    metadata={
+                        "commit_id": commit_id,
+                        "file_id": gone_id,
+                        "path": "gone.py",
+                        "status": "modified",
+                    },
+                    distance=0.05,
+                ),
+                QueryHit(
+                    document="live body",
+                    metadata={
+                        "commit_id": commit_id,
+                        "file_id": live_id,
+                        "path": "live.py",
+                        "status": "modified",
+                    },
+                    distance=0.15,
+                ),
+            ]
+
+    api_env.state.indexer = _FakeIndexer()
+
+    r = api_env.http.post(
+        "/api/query",
+        json={"github_repository_id": GID, "question": "how does it work?"},
+    )
+
+    assert r.status_code == 200
+    data = r.json()
+    paths = {ref["path"] for ref in data["references"]}
+    assert "live.py" in paths
+    assert "gone.py" not in paths
+    # The deleted patch never reached the LLM context either.
+    prompt = api_env.prompts[-1]
+    assert "+gone-deleted" not in prompt
+    assert "+live-current" in prompt
 
 
 def test_query_chroma_failure_returns_503(api_env):

@@ -184,10 +184,22 @@ class ContentResolver:
             candidate = _full_content_from_patch(patch)
             if candidate is not None:
                 if expected_blob_sha and git_blob_sha(candidate) != expected_blob_sha:
-                    raise PatchApplyError("blob sha mismatch for added file")
-                return ResolvedContent(
-                    candidate, expected_blob_sha or git_blob_sha(candidate), "patch"
-                )
+                    # Reconstruction is lossy for some patches (e.g. trailing
+                    # newline handling): per the contract at the top of this
+                    # file, ANY sha mismatch falls back to the exact fetch in
+                    # (3) instead of raising - a mismatch here is deterministic
+                    # and would otherwise retry forever and fail the event.
+                    log.debug(
+                        "patch_apply_fallback path=%s reason=blob sha mismatch "
+                        "for added file (full reconstruction)",
+                        path,
+                    )
+                else:
+                    return ResolvedContent(
+                        candidate,
+                        expected_blob_sha or git_blob_sha(candidate),
+                        "patch",
+                    )
 
         # 3. exact fetch from GitHub at the event commit
         try:

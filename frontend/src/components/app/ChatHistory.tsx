@@ -77,7 +77,7 @@ export default function ChatHistory({
       <div className="relative mb-4">
         <Search
           className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2"
-          style={{ color: "#626977" }}
+          style={{ color: "var(--kyro-text-muted)" }}
         />
         <input
           type="text"
@@ -86,18 +86,18 @@ export default function ChatHistory({
           placeholder="Search chats..."
           className="w-full rounded-lg py-2 pl-8 pr-8 text-[13px] outline-none transition-colors"
           style={{
-            background: "#12151c",
-            border: "1px solid rgba(255,255,255,0.08)",
-            color: "#f5f5f5",
+            background: "var(--kyro-card)",
+            border: "1px solid var(--kyro-border)",
+            color: "var(--kyro-text)",
           }}
-          onFocus={(e) => (e.currentTarget.style.borderColor = "rgba(255,255,255,0.12)")}
-          onBlur={(e) => (e.currentTarget.style.borderColor = "rgba(255,255,255,0.08)")}
+          onFocus={(e) => (e.currentTarget.style.borderColor = "var(--kyro-accent)")}
+          onBlur={(e) => (e.currentTarget.style.borderColor = "var(--kyro-border)")}
         />
         <kbd
           className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded px-1.5 py-0.5 font-mono text-[10px]"
           style={{
-            border: "1px solid rgba(255,255,255,0.08)",
-            color: "#626977",
+            border: "1px solid var(--kyro-border)",
+            color: "var(--kyro-text-muted)",
           }}
         >
           ⌘F
@@ -107,8 +107,8 @@ export default function ChatHistory({
       {groups.map((group) => (
         <div key={group.label} className="mb-4">
           <div
-            className="mb-1.5 px-1 text-[11px] font-medium"
-            style={{ color: "#626977" }}
+            className="kyro-overline mb-2 px-1"
+            style={{ color: "var(--kyro-text-muted)" }}
           >
             {group.label}
           </div>
@@ -120,13 +120,13 @@ export default function ChatHistory({
                 tabIndex={0}
                 onClick={() => onSelectChat(chat.id)}
                 onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onSelectChat(chat.id); } }}
-                className="group flex w-full cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-[7px] text-left transition-colors"
+                className="group flex w-full cursor-pointer items-center gap-2.5 rounded-md px-2.5 py-[7px] text-left transition-colors"
                 style={{
-                  background: activeChatId === chat.id ? "#1a1e27" : "transparent",
-                  color: activeChatId === chat.id ? "#f5f5f5" : "#8f96a3",
+                  background: activeChatId === chat.id ? "var(--kyro-accent-soft)" : "transparent",
+                  color: activeChatId === chat.id ? "var(--kyro-text)" : "var(--kyro-text-secondary)",
                 }}
                 onMouseEnter={(e) => {
-                  if (activeChatId !== chat.id) e.currentTarget.style.background = "#12151c";
+                  if (activeChatId !== chat.id) e.currentTarget.style.background = "var(--kyro-card-hover)";
                 }}
                 onMouseLeave={(e) => {
                   if (activeChatId !== chat.id) e.currentTarget.style.background = "transparent";
@@ -134,12 +134,12 @@ export default function ChatHistory({
               >
                 <MessageSquare
                   className="h-4 w-4 flex-shrink-0"
-                  style={{ color: "#626977" }}
+                  style={{ color: activeChatId === chat.id ? "var(--kyro-accent-hover)" : "var(--kyro-text-muted)" }}
                 />
                 <span className="flex-1 truncate text-[13px]">{chat.title}</span>
                 <span
                   className="flex-shrink-0 text-[11px]"
-                  style={{ color: "#626977" }}
+                  style={{ color: "var(--kyro-text-muted)" }}
                 >
                   {formatTime(chat.updatedAt)}
                 </span>
@@ -149,9 +149,9 @@ export default function ChatHistory({
                     onDeleteChat(chat.id);
                   }}
                   className="flex-shrink-0 opacity-0 transition-opacity group-hover:opacity-100"
-                  style={{ color: "#626977" }}
-                  onMouseEnter={(e) => (e.currentTarget.style.color = "#ef4444")}
-                  onMouseLeave={(e) => (e.currentTarget.style.color = "#626977")}
+                  style={{ color: "var(--kyro-text-muted)" }}
+                  onMouseEnter={(e) => (e.currentTarget.style.color = "var(--kyro-error)")}
+                  onMouseLeave={(e) => (e.currentTarget.style.color = "var(--kyro-text-muted)")}
                   aria-label="Delete chat"
                 >
                   <Trash2 className="h-3.5 w-3.5" />
@@ -163,7 +163,7 @@ export default function ChatHistory({
       ))}
 
       {chats.length === 0 && !searchQuery && (
-        <div className="px-1 py-6 text-center text-[12px]" style={{ color: "#626977" }}>
+        <div className="px-1 py-6 text-center text-[12px]" style={{ color: "var(--kyro-text-muted)" }}>
           No chats yet. Start a new conversation.
         </div>
       )}

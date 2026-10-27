@@ -23,10 +23,24 @@ if TYPE_CHECKING:
     from tests.fake_github import FakeGitHub
 
 BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-TEST_DB_URL = "postgresql+psycopg://kyro:kyro@localhost:5433/kyro_test"
-ADMIN_DB_URL = "postgresql+psycopg://kyro:kyro@localhost:5433/postgres"
-KAFKA_BOOTSTRAP = os.environ.get("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
-CHROMA_URL = os.environ.get("CHROMA_URL", "http://localhost:8100")
+# NOTE: host services are addressed as 127.0.0.1, never "localhost": "localhost"
+# resolves IPv6-first (::1) on Windows, and this machine's loopback stack
+# mishandles ::1 connects for the mapped Docker ports — libpq then burns its
+# entire connect_timeout per attempt (single tests took ~9 min instead of
+# seconds). Same endpoints, IPv4 forced. Env vars still override.
+TEST_DB_URL = "postgresql+psycopg://kyro:kyro@127.0.0.1:5433/kyro_test"
+ADMIN_DB_URL = "postgresql+psycopg://kyro:kyro@127.0.0.1:5433/postgres"
+KAFKA_BOOTSTRAP = os.environ.get("KAFKA_BOOTSTRAP_SERVERS", "127.0.0.1:9092")
+CHROMA_URL = os.environ.get("CHROMA_URL", "http://127.0.0.1:8100")
+
+# Hermetic auth mode: backend/.env may define KYRO_API_KEY (host-run backend
+# runs authenticated since the tunnel-readiness fix). The suite must run in
+# dev-open mode unless a test monkeypatches config.KYRO_API_KEY explicitly -
+# set the empty value BEFORE any `app` import so config.py's
+# load_dotenv(override=False) keeps it (dotenv never overwrites an existing
+# os.environ entry). Sub-process harnesses below inherit os.environ, matching
+# the suite's pre-fix behavior exactly.
+os.environ["KYRO_API_KEY"] = ""
 
 ADMIN_TABLES = (
     "commit_files,commits,files,github_installations,"
@@ -219,6 +233,14 @@ class WorkerHarness:
         )
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
+        # A confluent_kafka Consumer must not be polled by two threads at
+        # once: concurrent `poll_once` interleaves the synchronous offset
+        # commits, so a later `committed()` read can observe a half-finished
+        # batch (this was the root cause of the test_worker_kafka flake).
+        # Both the background loop and drain() therefore serialize on this
+        # lock, and a shared counter tracks messages handled by either.
+        self._poll_lock = threading.Lock()
+        self._handled_total = 0
 
     def start(self) -> None:
         """Background drain loop (for running alongside the sync manager)."""
@@ -226,7 +248,10 @@ class WorkerHarness:
 
         def _loop() -> None:
             while not self._stop.is_set():
-                self.worker.poll_once(num_messages=50, timeout_s=0.2)
+                with self._poll_lock:
+                    self._handled_total += self.worker.poll_once(
+                        num_messages=50, timeout_s=0.2
+                    )
 
         self._thread = threading.Thread(target=_loop, daemon=True)
         self._thread.start()
@@ -245,30 +270,38 @@ class WorkerHarness:
         With `expected` the loop is deterministic: it keeps polling until
         that many messages were handled (or timeout). Without it, it stops
         after 3 consecutive empty rounds.
+
+        drain() holds the poll lock for its whole duration so the background
+        loop started by start() cannot interleave — exactly one thread polls
+        the consumer at a time, and every synchronous offset commit has landed
+        before this returns. The shared `_handled_total` counter means messages
+        the background loop already consumed still count toward `expected`.
         """
         deadline = time.monotonic() + timeout_s
-        handled = 0
-        # Wait for assignment; poll while waiting so nothing is missed.
-        while time.monotonic() < deadline:
-            try:
-                if self.worker.consumer.assignment():
+        with self._poll_lock:
+            # Wait for assignment; poll while waiting so nothing is missed.
+            while time.monotonic() < deadline:
+                try:
+                    if self.worker.consumer.assignment():
+                        break
+                except Exception:
+                    pass
+                self._handled_total += self.worker.poll_once(
+                    num_messages=100, timeout_s=0.2
+                )
+            empty = 0
+            rounds = 0
+            while time.monotonic() < deadline and rounds < max_rounds:
+                if expected is not None and self._handled_total >= expected:
                     break
-            except Exception:
-                pass
-            handled += self.worker.poll_once(num_messages=100, timeout_s=0.2)
-        empty = 0
-        rounds = 0
-        while time.monotonic() < deadline and rounds < max_rounds:
-            if expected is not None and handled >= expected:
-                break
-            n = self.worker.poll_once(num_messages=200, timeout_s=0.3)
-            handled += n
-            rounds += 1
-            if expected is None:
-                empty = 0 if n else empty + 1
-                if empty >= 3:
-                    break
-        return handled
+                n = self.worker.poll_once(num_messages=200, timeout_s=0.3)
+                self._handled_total += n
+                rounds += 1
+                if expected is None:
+                    empty = 0 if n else empty + 1
+                    if empty >= 3:
+                        break
+        return self._handled_total
 
     def stop(self) -> None:
         self._stop.set()

@@ -3,12 +3,27 @@
 
 /** Only these backend paths may be reached through the frontend proxy. */
 const NUMERIC = /^\d+$/;
+const AUTH_ROUTES = new Set(["register", "login", "logout", "me"]);
+// "Sign in with GitHub" redirect flow (browser navigations through the
+// proxy; the backend answers 302s that this proxy forwards verbatim).
+const GITHUB_OAUTH_ROUTES = new Set(["start", "callback"]);
 
 export function isAllowedPath(segments: string[]): boolean {
   if (segments.length === 0) return false;
   if (segments.length === 1) return segments[0] === "health";
   if (segments[0] !== "api") return false;
   if (segments[1] === "query") return segments.length === 2;
+  if (segments[1] === "auth") {
+    // GitHub OAuth start/callback (4 segments) + session endpoints (3).
+    if (segments[2] === "github") {
+      return segments.length === 4 && GITHUB_OAUTH_ROUTES.has(segments[3]);
+    }
+    return segments.length === 3 && AUTH_ROUTES.has(segments[2]);
+  }
+  if (segments[1] === "github") {
+    // The repo picker listing (session-guarded at the backend).
+    return segments.length === 3 && segments[2] === "repos";
+  }
   if (segments[1] === "repositories") {
     if (segments.length === 2) return true;
     if (segments.length === 3) {

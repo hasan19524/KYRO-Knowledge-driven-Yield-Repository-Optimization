@@ -81,10 +81,16 @@ class GithubInstallation(Base):
 class User(Base):
     """KYRO user account.
 
-    Authentication is by API key only: `api_key_hash` stores the SHA-256 of
-    the key (plaintext returned exactly once at issue/rotation). The shared
-    service key (config.KYRO_API_KEY) maps to the `default` user instead of
-    a stored key, so the Next.js proxy keeps working unchanged.
+    Two independent credential kinds coexist (fail-closed, neither weakens
+    the other):
+
+    * API key: `api_key_hash` stores the SHA-256 of the key (plaintext
+      returned exactly once at issue/rotation). The shared service key
+      (config.KYRO_API_KEY) maps to the `default` user instead of a stored
+      key, so the Next.js proxy keeps working unchanged.
+    * Email/password login (additive): `email` plus a PBKDF2 hash in
+      `password_hash`; sessions live in `user_sessions`. Only hashes are
+      stored. Nullable so existing rows are untouched.
     """
 
     __tablename__ = "users"
@@ -92,6 +98,14 @@ class User(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     handle: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
     api_key_hash: Mapped[str | None] = mapped_column(Text, unique=True)
+    email: Mapped[str | None] = mapped_column(Text, unique=True)
+    password_hash: Mapped[str | None] = mapped_column(Text)
+    # GitHub App OAuth identity (additive, third credential kind): the
+    # numeric GitHub user id + login recorded when "Sign in with GitHub"
+    # creates or links the account. The OAuth access token itself is used
+    # once for identity and NEVER stored.
+    github_id: Mapped[int | None] = mapped_column(BigInteger, unique=True)
+    github_login: Mapped[str | None] = mapped_column(Text)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, nullable=False
@@ -105,6 +119,29 @@ class User(Base):
         # Let the database enforce ON DELETE RESTRICT: never silently null
         # out ownership by deleting a user who still owns repositories.
         passive_deletes=True,
+    )
+
+
+class UserSession(Base):
+    """Login session for the additive email/password auth.
+
+    The opaque bearer token is generated with `secrets` and only its
+    SHA-256 hash is stored (`token_hash`); expiry is enforced server-side
+    on every request. Deleting the row invalidates the session (logout).
+    """
+
+    __tablename__ = "user_sessions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    token_hash: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, nullable=False
+    )
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
     )
 
 

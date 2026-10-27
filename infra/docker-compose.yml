@@ -88,12 +88,18 @@ services:
       KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kyro-kafka:9093
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
 
-      # Dual listener: HOST :9092 advertised as localhost:9092 for host tools
+      # Dual listener: HOST :9092 advertised as 127.0.0.1:9092 for host tools
       # (bound to 127.0.0.1 above — host-only); PLAINTEXT :29092 advertised as
       # kyro-kafka:29092 for containers on kyro-data (worker, backend, n8n).
       # One listener cannot serve both.
+      # NOTE: the HOST listener advertises 127.0.0.1, never "localhost":
+      # "localhost" resolves IPv6-first (::1) on Windows, and this machine's
+      # loopback stack mishandles ::1 connects. A host client connecting to
+      # 127.0.0.1:9092 is redirected to the ADVERTISED address, so advertising
+      # "localhost" re-introduces the flaky ::1 connect (observed as intermittent
+      # Kafka timeouts in the host-run test suite).
       KAFKA_LISTENERS: PLAINTEXT://:29092,CONTROLLER://:9093,HOST://:9092
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kyro-kafka:29092,HOST://localhost:9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kyro-kafka:29092,HOST://127.0.0.1:9092
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT,HOST:PLAINTEXT
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
 

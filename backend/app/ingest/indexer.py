@@ -116,12 +116,24 @@ class ChromaIndexer:
         *,
         repository_pk: int,
         n_results: int = 8,
+        exclude_file_ids: set[int] | None = None,
     ) -> list[QueryHit]:
+        where: dict = {"repository_id": repository_pk}
+        if exclude_file_ids:
+            # Deleted/renamed-away files are filtered INSIDE the index query
+            # so their chunks cannot occupy the (bounded) overfetch window
+            # and crowd current code out before post-filtering runs.
+            where = {
+                "$and": [
+                    where,
+                    {"file_id": {"$nin": sorted(exclude_file_ids)}},
+                ]
+            }
         try:
             res = self.collection.query(
                 query_texts=[query],
                 n_results=n_results,
-                where={"repository_id": repository_pk},
+                where=where,
                 include=["documents", "metadatas", "distances"],
             )
         except Exception as exc:

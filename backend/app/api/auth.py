@@ -1,13 +1,18 @@
-"""User identity + admin authentication (X-API-Key).
+"""User identity + admin authentication (X-API-Key + login sessions).
 
-Two credential kinds share the X-API-Key header; identity is ALWAYS derived
-server-side from the credential, never from a client-supplied user id:
+Three credential kinds share the Authorization/X-API-Key headers; identity
+is ALWAYS derived server-side from the credential, never from a
+client-supplied user id:
 
   * shared service key (config.KYRO_API_KEY) -> the legacy `default`
     identity. This is what the Next.js proxy injects server-side, so the
     existing frontend keeps working without changes.
   * per-user API key (users.api_key_hash, SHA-256 of the key) -> that
     user's identity, used for multi-user isolation.
+  * login session bearer token (Authorization: Bearer ..., additive
+    email/password auth) -> that user's identity. Session failures are
+    TERMINAL: an invalid/expired bearer always answers 401 and never
+    falls back to API-key auth or dev mode.
 
 Unset KYRO_API_KEY => local development mode: requests without a per-user
 key act as the `default` identity (same open behavior as before). A
@@ -20,6 +25,7 @@ from __future__ import annotations
 import hashlib
 import secrets
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 
 from fastapi import Header, HTTPException, Request
 from sqlalchemy import select
@@ -27,7 +33,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
 from app import config
-from app.db.models import DEFAULT_USER_HANDLE, Repository, User
+from app.db.models import DEFAULT_USER_HANDLE, Repository, User, UserSession
 
 
 @dataclass(frozen=True)
@@ -52,6 +58,30 @@ def hash_api_key(key: str) -> str:
 def generate_api_key() -> str:
     """Fresh per-user API key (returned to the caller exactly once)."""
     return f"kyro_{secrets.token_hex(24)}"
+
+
+SESSION_TOKEN_PREFIX = "kyro_sess_"
+
+
+def hash_session_token(token: str) -> str:
+    """SHA-256 of a session token (only the hash is ever stored)."""
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def generate_session_token() -> str:
+    """Cryptographically secure opaque session token (>= 256 bits)."""
+    return f"{SESSION_TOKEN_PREFIX}{secrets.token_urlsafe(32)}"
+
+
+def bearer_token(authorization: str | None) -> str | None:
+    """Extract the token from an `Authorization: Bearer ...` header."""
+    if not authorization:
+        return None
+    scheme, _, token = authorization.partition(" ")
+    if scheme.lower() != "bearer":
+        return None
+    token = token.strip()
+    return token or None
 
 
 def _as_current(user: User) -> CurrentUser:
@@ -98,11 +128,89 @@ def _user_by_key(
         return _as_current(user), user.is_active
 
 
-def require_user(
-    request: Request, x_api_key: str | None = Header(default=None)
+def create_session(session_factory: sessionmaker[Session], user_id: int) -> str:
+    """Persist a new login session; returns the plaintext token (once)."""
+    token = generate_session_token()
+    expires_at = datetime.now(UTC) + timedelta(hours=config.AUTH_SESSION_TTL_HOURS)
+    with session_factory() as session, session.begin():
+        session.add(
+            UserSession(
+                user_id=user_id,
+                token_hash=hash_session_token(token),
+                expires_at=expires_at,
+            )
+        )
+    return token
+
+
+def _user_by_session(
+    session_factory: sessionmaker[Session], token: str
+) -> tuple[CurrentUser, bool] | None:
+    """Look up a session token hash -> (identity, is_active) or None.
+
+    Missing, expired, orphaned or deactivated-user sessions all resolve
+    to None so callers answer a uniform 401 (no information leak).
+    """
+    with session_factory() as session:
+        row = session.scalar(
+            select(UserSession).where(
+                UserSession.token_hash == hash_session_token(token)
+            )
+        )
+        if row is None:
+            return None
+        if row.expires_at <= datetime.now(UTC):
+            return None
+        user = session.get(User, row.user_id)
+        if user is None:
+            return None
+        return _as_current(user), user.is_active
+
+
+_SESSION_401 = HTTPException(status_code=401, detail="invalid or expired session")
+
+
+def require_session(
+    request: Request, authorization: str | None = Header(default=None)
 ) -> CurrentUser:
-    """Resolve the requesting user's identity from the X-API-Key header."""
+    """Guard for session-only endpoints (logout, me).
+
+    Requires a valid `Authorization: Bearer` login session; API keys and
+    development mode do NOT satisfy it.
+    """
+    token = bearer_token(authorization)
+    if token is None:
+        raise HTTPException(status_code=401, detail="session required")
+    found = _user_by_session(get_state(request).session_factory, token)
+    if found is None:
+        raise _SESSION_401
+    user, is_active = found
+    if not is_active:
+        raise _SESSION_401
+    return user
+
+
+def require_user(
+    request: Request,
+    x_api_key: str | None = Header(default=None),
+    authorization: str | None = Header(default=None),
+) -> CurrentUser:
+    """Resolve the requesting user's identity (session bearer first)."""
     session_factory = get_state(request).session_factory
+
+    # Login-session bearer takes precedence and is terminal: a bad/expired
+    # token answers 401 without ever falling back to API-key auth or the
+    # development-mode identity.
+    token = bearer_token(authorization)
+    if token is not None:
+        found = _user_by_session(session_factory, token)
+        if found is None:
+            raise _SESSION_401
+        user, is_active = found
+        if not is_active:
+            raise _SESSION_401
+        return user
+
     expected = config.KYRO_API_KEY
 
     if expected:
@@ -179,11 +287,15 @@ def require_api_key(x_api_key: str | None = Header(default=None)) -> None:
 
 __all__ = [
     "CurrentUser",
+    "create_session",
     "generate_api_key",
+    "generate_session_token",
     "get_state",
     "hash_api_key",
+    "hash_session_token",
     "may_access",
     "require_admin",
     "require_api_key",
+    "require_session",
     "require_user",
 ]

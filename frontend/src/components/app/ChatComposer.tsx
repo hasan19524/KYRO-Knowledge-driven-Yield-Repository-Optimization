@@ -7,13 +7,19 @@ interface ChatComposerProps {
   onSend: (content: string) => void;
   initialValue?: string;
   repositoryLabel?: string | null;
+  /** True while a query is in flight — blocks duplicate submissions. */
+  busy?: boolean;
+  /** True while the selected repository cannot answer (indexing/failed/revoked). */
+  disabled?: boolean;
+  /** Placeholder shown while disabled — tells the user why input is locked. */
+  disabledReason?: string;
 }
 
 function SparkleSmall({ className, style }: { className?: string; style?: React.CSSProperties }) {
   return (
     <svg viewBox="0 0 16 16" fill="none" className={className} style={style}>
       <path
-        d="M8 1L9.5 6.5L15 8L9.5 9.5L8 15L6.5 9.5L1 8L6.5 6.5L8 1Z"
+        d="M8 1L9.5 6.5L15 8L9.5 9.5L8 15L6.5 9.5L1 8L6.5 9.5L8 1Z"
         fill="currentColor"
       />
     </svg>
@@ -24,9 +30,15 @@ export default function ChatComposer({
   onSend,
   initialValue = "",
   repositoryLabel,
+  busy = false,
+  disabled = false,
+  disabledReason,
 }: ChatComposerProps) {
   const [value, setValue] = useState(initialValue);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // One gate for styling + submission: locked composer never sends.
+  const canSend = value.trim() !== "" && !busy && !disabled;
 
   const adjustHeight = useCallback(() => {
     const el = textareaRef.current;
@@ -47,7 +59,7 @@ export default function ChatComposer({
 
   const handleSubmit = () => {
     const trimmed = value.trim();
-    if (!trimmed) return;
+    if (!trimmed || busy || disabled) return; // ignore while locked or in flight
     onSend(trimmed);
     setValue("");
     if (textareaRef.current) {
@@ -64,11 +76,10 @@ export default function ChatComposer({
 
   return (
     <div
-      className="w-full transition-colors"
+      className="w-full border border-border transition-colors focus-within:border-accent-hover"
       style={{
-        background: "#12151c",
-        border: "1px solid rgba(255,255,255,0.08)",
-        borderRadius: "14px",
+        background: "var(--kyro-card)",
+        borderRadius: "12px",
         maxWidth: "900px",
       }}
     >
@@ -78,27 +89,38 @@ export default function ChatComposer({
           value={value}
           onChange={(e) => setValue(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder="Ask anything about your repository..."
+          disabled={disabled}
+          placeholder={
+            disabled
+              ? (disabledReason ?? "KYRO is indexing this repository…")
+              : "Ask KYRO anything..."
+          }
           rows={4}
-          className="max-h-[200px] min-h-[80px] flex-1 bg-transparent py-1 text-[15px] leading-[1.6] outline-none placeholder:text-[#626977]"
-          style={{ color: "#f5f5f5", resize: "none" }}
+          className="max-h-[200px] min-h-[76px] flex-1 bg-transparent py-1 text-[14px] leading-[1.6] outline-none disabled:cursor-not-allowed"
+          style={{
+            color: disabled ? "var(--kyro-text-muted)" : "var(--kyro-text)",
+            resize: "none",
+          }}
         />
       </div>
 
       <div
         className="flex items-center justify-between px-4 py-3"
-        style={{ borderTop: "1px solid rgba(255,255,255,0.06)" }}
+        style={{ borderTop: "1px solid var(--kyro-border-subtle)" }}
       >
-        <div className="flex items-center gap-2">
+        <div
+          className="flex items-center gap-2"
+          style={disabled ? { opacity: 0.4, pointerEvents: "none" } : undefined}
+        >
           <button
             className="flex h-8 w-8 items-center justify-center rounded-lg transition-colors"
-            style={{ color: "#626977" }}
+            style={{ color: "var(--kyro-text-muted)" }}
             onMouseEnter={(e) => {
-              e.currentTarget.style.color = "#8f96a3";
-              e.currentTarget.style.background = "#1a1e27";
+              e.currentTarget.style.color = "var(--kyro-text-secondary)";
+              e.currentTarget.style.background = "var(--kyro-card-hover)";
             }}
             onMouseLeave={(e) => {
-              e.currentTarget.style.color = "#626977";
+              e.currentTarget.style.color = "var(--kyro-text-muted)";
               e.currentTarget.style.background = "transparent";
             }}
             aria-label="Attach context"
@@ -108,53 +130,51 @@ export default function ChatComposer({
           </button>
 
           <button
-            className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[13px] transition-colors"
+            className="flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[13px] transition-colors"
             style={{
-              background: "#1a1e27",
-              border: "1px solid rgba(255,255,255,0.08)",
-              color: "#8f96a3",
+              background: "transparent",
+              border: "1px solid var(--kyro-border)",
+              color: "var(--kyro-text-secondary)",
             }}
-            onMouseEnter={(e) => (e.currentTarget.style.borderColor = "rgba(255,255,255,0.12)")}
-            onMouseLeave={(e) => (e.currentTarget.style.borderColor = "rgba(255,255,255,0.08)")}
+            onMouseEnter={(e) => (e.currentTarget.style.background = "var(--kyro-accent-soft)")}
+            onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
             type="button"
           >
-            <Folder className="h-3.5 w-3.5" style={{ color: "#626977" }} />
-            <span className="max-w-[180px] truncate">
-              {repositoryLabel ?? "Repository"}
-            </span>
-            <ChevronDown className="h-3 w-3" style={{ color: "#626977" }} />
+            <Folder className="h-3.5 w-3.5" style={{ color: "var(--kyro-text-muted)" }} />
+            <span>{repositoryLabel ?? "Repository"}</span>
+            <ChevronDown className="h-3 w-3" style={{ color: "var(--kyro-text-muted)" }} />
           </button>
 
           <button
-            className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[13px] transition-colors"
+            className="flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[13px] transition-colors"
             style={{
-              background: "#1a1e27",
-              border: "1px solid rgba(255,255,255,0.08)",
-              color: "#8f96a3",
+              background: "transparent",
+              border: "1px solid var(--kyro-border)",
+              color: "var(--kyro-text-secondary)",
             }}
-            onMouseEnter={(e) => (e.currentTarget.style.borderColor = "rgba(255,255,255,0.12)")}
-            onMouseLeave={(e) => (e.currentTarget.style.borderColor = "rgba(255,255,255,0.08)")}
+            onMouseEnter={(e) => (e.currentTarget.style.background = "var(--kyro-accent-soft)")}
+            onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
             type="button"
           >
-            <SparkleSmall className="h-3.5 w-3.5" style={{ color: "#626977" }} />
+            <SparkleSmall className="h-3.5 w-3.5" style={{ color: "var(--kyro-text-muted)" }} />
             <span>Auto</span>
-            <ChevronDown className="h-3 w-3" style={{ color: "#626977" }} />
+            <ChevronDown className="h-3 w-3" style={{ color: "var(--kyro-text-muted)" }} />
           </button>
         </div>
 
         <button
           onClick={handleSubmit}
-          disabled={!value.trim()}
-          className="flex h-9 w-9 items-center justify-center rounded-full transition-all disabled:opacity-20 disabled:cursor-not-allowed"
+          disabled={!canSend}
+          className="flex h-9 w-9 items-center justify-center rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
           style={{
-            background: value.trim() ? "#f5f5f5" : "#2a2d35",
-            color: value.trim() ? "#08090b" : "#626977",
+            background: canSend ? "var(--kyro-accent)" : "var(--kyro-card-active)",
+            color: canSend ? "var(--kyro-text)" : "var(--kyro-text-muted)",
           }}
           onMouseEnter={(e) => {
-            if (value.trim()) e.currentTarget.style.background = "#e5e5e5";
+            if (canSend) e.currentTarget.style.background = "var(--kyro-accent-hover)";
           }}
           onMouseLeave={(e) => {
-            if (value.trim()) e.currentTarget.style.background = "#f5f5f5";
+            if (canSend) e.currentTarget.style.background = "var(--kyro-accent)";
           }}
           aria-label="Send message"
           type="button"

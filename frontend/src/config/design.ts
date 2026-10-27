@@ -1,29 +1,52 @@
+/**
+ * KYRO design tokens — source of truth: refrence/
+ * Colors mirror the CSS variables defined in src/app/globals.css.
+ */
 export const design = {
   colors: {
-    appBackground: "#08090b",
-    sidebarBackground: "#0b0d12",
-    surface: "#12151c",
-    surfaceHover: "#1a1e27",
-    surfaceActive: "#22262f",
-    border: "rgba(255,255,255,0.08)",
-    borderHover: "rgba(255,255,255,0.12)",
-    borderFocus: "rgba(255,255,255,0.16)",
-    borderSubtle: "rgba(255,255,255,0.06)",
-    textPrimary: "#f5f5f5",
-    textSecondary: "#8f96a3",
-    textMuted: "#626977",
-    textSubtle: "#4a5060",
-    textMind: "#9ca3af",
-    accent: "#c8cdd6",
-    accentHover: "#f5f5f5",
-    success: "#22c55e",
-    warning: "#eab308",
-    error: "#ef4444",
+    // Dark mode (default)
+    appBackground: "#090A08",
+    sidebarBackground: "#0F120E",
+    surface: "#151813",
+    surfaceHover: "#1A1E18",
+    surfaceActive: "#1F241D",
+    border: "#292E28",
+    borderHover: "rgba(234,231,220,0.16)",
+    borderFocus: "#5F795F",
+    borderSubtle: "rgba(234,231,220,0.07)",
+    textPrimary: "#EAE7DC",
+    textSecondary: "rgba(234,231,220,0.72)",
+    textMuted: "#9A9E95",
+    textSubtle: "rgba(234,231,220,0.42)",
+    textInverse: "#090A08",
+    accent: "#304D3A",
+    accentHover: "#5F795F",
+    accentSoft: "rgba(48,77,58,0.24)",
+    sageSoft: "rgba(95,121,95,0.20)",
+    success: "#5F795F",
+    warning: "#9A8B5E",
+    error: "#9E5F52",
+    overlay: "rgba(9,10,8,0.72)",
+
+    // Light mode
+    light: {
+      appBackground: "#F3F1E9",
+      sidebarBackground: "#E9E7DE",
+      surface: "#FFFFFF",
+      surfaceHover: "#FBFAF6",
+      surfaceActive: "#F1EFE6",
+      border: "#D9D9D0",
+      textPrimary: "#181815",
+      textSecondary: "#3A3D38",
+      textMuted: "#686D65",
+      overlay: "rgba(24,24,21,0.40)",
+    },
   },
 
   layout: {
-    sidebarWidth: "310px",
-    sidebarCollapsedWidth: "60px",
+    sidebarWidth: "264px",
+    sidebarCollapsedWidth: "64px",
+    topbarHeight: "56px",
     mainMaxWidth: "900px",
     composerMaxWidth: "900px",
   },
@@ -31,9 +54,8 @@ export const design = {
   radius: {
     sm: "6px",
     md: "8px",
-    lg: "12px",
-    xl: "14px",
-    "2xl": "18px",
+    lg: "10px",
+    xl: "12px",
     full: "9999px",
   },
 
@@ -49,37 +71,39 @@ export const design = {
   },
 
   shadows: {
-    card: "0 1px 2px rgba(0,0,0,0.3), 0 1px 3px rgba(0,0,0,0.15)",
-    input: "0 1px 2px rgba(0,0,0,0.2)",
-    hover: "0 4px 12px rgba(0,0,0,0.25)",
-    focus: "0 0 0 2px rgba(255,255,255,0.08)",
+    none: "none",
+    card: "0 1px 2px rgba(0,0,0,0.18)",
+    popover: "0 8px 24px rgba(0,0,0,0.35)",
+    focus: "0 0 0 2px var(--kyro-accent-soft)",
   },
 
   fonts: {
-    sans: "var(--font-geist-sans), system-ui, -apple-system, sans-serif",
+    sans: "var(--font-inter), system-ui, -apple-system, sans-serif",
     mono: "var(--font-geist-mono), ui-monospace, monospace",
   },
 
   fontSize: {
     xs: "11px",
-    sm: "13px",
-    md: "15px",
-    lg: "17px",
-    xl: "24px",
-    "2xl": "32px",
-    "3xl": "40px",
+    sm: "12px",
+    md: "13px",
+    body: "14px",
+    lg: "15px",
+    h4: "17px",
+    h3: "19px",
+    h2: "22px",
+    h1: "28px",
   },
 
   transitions: {
-    fast: "120ms ease",
-    normal: "200ms ease",
-    slow: "300ms ease",
+    fast: "140ms ease-out",
+    normal: "180ms ease-out",
+    slow: "300ms ease-out",
   },
 
   zIndex: {
-    sidebar: "40",
-    overlay: "50",
     topbar: "30",
+    overlay: "40",
+    sidebar: "50",
   },
 } as const;
 

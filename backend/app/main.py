@@ -7,6 +7,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
+from app.api.account import router as account_router
+from app.api.github_oauth import auth_router as github_auth_router
+from app.api.github_oauth import repos_router as github_repos_router
 from app.api.repositories import router as repositories_router
 from app.api.users import router as users_router
 from app.state import AppState, build_state
@@ -130,6 +133,9 @@ def create_app(state: AppState | None = None) -> FastAPI:
             content={"status": "ok" if ready else "degraded", "checks": checks},
         )
 
+    app.include_router(account_router)
+    app.include_router(github_auth_router)
+    app.include_router(github_repos_router)
     app.include_router(repositories_router)
     app.include_router(users_router)
     return app

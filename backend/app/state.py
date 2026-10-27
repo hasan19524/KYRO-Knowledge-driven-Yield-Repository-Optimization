@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 
 from sqlalchemy.orm import Session, sessionmaker
 
-from app import config, gemini_service
+from app import config, llm_chain
 from app.db import get_session_factory
 from app.github.auth import GitHubAppAuth
 from app.github.backfill import BackfillService
@@ -62,7 +62,9 @@ def build_state(
         processor=processor,
         backfill=backfill,
         sync_manager=manager,
-        llm=llm or gemini_service.chat,
+        # Provider fallback chain (opencode -> nvidia -> openrouter -> gemini);
+        # any provider failure falls through, all-fail raises for a 502.
+        llm=llm or llm_chain.chat,
     )
 
 

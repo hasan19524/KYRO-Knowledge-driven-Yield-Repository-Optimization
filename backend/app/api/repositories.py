@@ -21,6 +21,12 @@ from app.api.auth import CurrentUser, get_state, may_access, require_user
 from app.api.ratelimit import rate_limit
 from app.db.models import Commit, CommitFile, File, Repository, RepositoryStatus
 from app.ingest.indexer import IndexError_
+from app.retrieval import (
+    EMPTY_CONTEXT_NOTE,
+    apply_char_budget,
+    build_query_prompt,
+    rank_hits,
+)
 from app.state import AppState
 from app.sync.manager import RepositoryOwnershipConflict
 
@@ -211,9 +217,32 @@ def query(
 
     # --- ChromaDB semantic retrieval (candidates carry PG references) ------
     top_k = body.top_k or config.QUERY_TOP_K
+    # Over-fetch so duplicate copies of a chunk cannot crowd distinct
+    # chunks out of the top-K window before de-duplication.
+    n_results = top_k * config.QUERY_RETRIEVAL_OVERFETCH
+    # Deleted (and renamed-away) files are excluded from current-code
+    # retrieval using PostgreSQL as the source of truth: a path has a single
+    # `files` row whose id is stable across commits, so `is_deleted=true`
+    # covers both the deletion marker and every historical change of that
+    # path. The exclusion is applied INSIDE the Chroma query (so deleted
+    # chunks cannot crowd the bounded overfetch window) and again in
+    # rank_hits as defence in depth. Chroma is untouched (and stays
+    # rebuildable from PostgreSQL).
+    with session_factory() as session:
+        deleted_ids = set(
+            session.scalars(
+                select(File.id).where(
+                    File.repository_id == repo_pk,
+                    File.is_deleted.is_(True),
+                )
+            ).all()
+        )
     try:
         hits = state.indexer.search(
-            body.question, repository_pk=repo_pk, n_results=top_k
+            body.question,
+            repository_pk=repo_pk,
+            n_results=n_results,
+            exclude_file_ids=deleted_ids,
         )
     except IndexError_ as exc:
         log.error(
@@ -226,16 +255,22 @@ def query(
             detail="semantic index temporarily unavailable; retry shortly",
         ) from exc
 
-    # --- ranking / filtering: similarity order, complete metadata only ----
-    ranked = [
-        h
-        for h in sorted(hits, key=lambda h: (h.distance is None, h.distance))
-        if h.metadata.get("commit_id") is not None
-        and h.metadata.get("file_id") is not None
-    ][:top_k]
+    # --- ranking: similarity order, threshold, complete metadata, dedup ---
+    ranked = rank_hits(
+        hits,
+        top_k=top_k,
+        similarity_threshold=config.QUERY_SIMILARITY_THRESHOLD,
+        exclude_file_ids=deleted_ids,
+    )
 
     # --- PostgreSQL enrichment (single batched query, no N+1) -------------
-    pairs = [(int(h.metadata["commit_id"]), int(h.metadata["file_id"])) for h in ranked]
+    pairs = [
+        (
+            int(ranked_hit.hit.metadata["commit_id"]),
+            int(ranked_hit.hit.metadata["file_id"]),
+        )
+        for ranked_hit in ranked
+    ]
     enriched: dict[tuple[int, int], tuple[Commit, CommitFile, File]] = {}
     if pairs:
         with session_factory() as session:
@@ -255,30 +290,31 @@ def query(
                     file_row,
                 )
 
-    # --- context assembly (bounded; only relevant context reaches the LLM)
-    references: list[Reference] = []
-    context_parts: list[str] = []
-    used = 0
-    for hit in ranked:
+    # --- context assembly (bounded; references cite what the LLM saw) ----
+    refs: list[Reference] = []
+    blocks: list[str] = []
+    for ranked_hit in ranked:
+        hit = ranked_hit.hit
         key = (int(hit.metadata["commit_id"]), int(hit.metadata["file_id"]))
         bundle = enriched.get(key)
         if bundle is None:
             continue
         commit, commit_file, file_row = bundle
-        ref = Reference(
-            commit_sha=commit.github_commit_sha,
-            commit_message=commit.message,
-            committed_at=commit.committed_at.isoformat()
-            if commit.committed_at
-            else None,
-            author=commit.author_name,
-            path=file_row.path,
-            status=commit_file.status,
-            additions=commit_file.additions,
-            deletions=commit_file.deletions,
-            similarity_distance=hit.distance,
+        refs.append(
+            Reference(
+                commit_sha=commit.github_commit_sha,
+                commit_message=commit.message,
+                committed_at=commit.committed_at.isoformat()
+                if commit.committed_at
+                else None,
+                author=commit.author_name,
+                path=file_row.path,
+                status=commit_file.status,
+                additions=commit_file.additions,
+                deletions=commit_file.deletions,
+                similarity_distance=hit.distance,
+            )
         )
-        references.append(ref)
 
         patch = (commit_file.patch or "").strip()
         if len(patch) > config.QUERY_PATCH_MAX_CHARS:
@@ -293,26 +329,19 @@ def query(
         )
         if patch:
             block += f"diff:\n{patch}"
-        if used + len(block) > config.QUERY_CONTEXT_MAX_CHARS:
-            break
-        context_parts.append(block)
-        used += len(block)
+        blocks.append(block)
 
-    if not context_parts:
-        # READY but no semantic chunks yet (e.g. empty index): still answer
-        # honestly without dumping anything unrelated into the LLM.
-        context = "No indexed changes matched this question for this repository."
-    else:
-        context = "\n\n".join(context_parts)
+    kept = apply_char_budget(blocks, max_chars=config.QUERY_CONTEXT_MAX_CHARS)
+    references = [refs[index] for index, _block in kept]
+    context_blocks = [block for _index, block in kept]
 
-    prompt = (
-        "You are KYRO, a repository intelligence assistant. Answer the user's "
-        "question using ONLY the repository context below. If the context is "
-        "insufficient, say so explicitly. Be concise and cite commit shas and "
-        "file paths from the context when relevant.\n\n"
-        f"Repository: {repo_full_name}\n\n"
-        f"Repository context:\n{context}\n\n"
-        f"Question: {body.question}"
+    # READY but no semantic chunks matched (empty index or everything
+    # below threshold): still answer honestly without dumping anything
+    # unrelated into the LLM.
+    context = EMPTY_CONTEXT_NOTE if not context_blocks else "\n\n".join(context_blocks)
+
+    prompt = build_query_prompt(
+        repository=repo_full_name, context=context, question=body.question
     )
     try:
         answer = state.llm(prompt)

@@ -1,0 +1,2 @@
+phase,label,pushes_requested,commits_confirmed,burst_start_utc,last_push_utc,drain_end_utc,drain_s,post_burst_drain_s,lag_peak,consumers_before,consumers_after,container_members_after,containers_tracked,container_mem_mb_peak,host_free_ram_mb_after,burst_exit_code
+A,trackb_a,40,56,2026-10-20T15:19:57.445Z,2026-10-20T18:02:52.749Z,2026-10-20T18:03:21.147Z,9797.8,28.4,0,0,0,0,0,0.0,849,0

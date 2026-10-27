@@ -255,6 +255,29 @@ class EventProcessor:
             repo = resolve_repository(session, payload, lock=True)
             row.repository_github_id = repo.github_repository_id
 
+            # ---- recovery: a redelivered event revives a failed repository --
+            # A transient failure (e.g. a Chroma outage) marks the repository
+            # SYNC_FAILED and leaves the failing offset uncommitted, so the
+            # event is redelivered on restart. When it is genuinely
+            # re-processed here, the repository must re-enter the normal
+            # SYNCING state — otherwise the supervisor (which only resumes
+            # SYNCING repos) never touches it again and it stays stuck in
+            # SYNC_FAILED forever even though ingestion is healthy.
+            #
+            # Readiness is NOT set here: only SyncManager._try_finalize can
+            # promote SYNCING -> READY, and only once backfill is genuinely
+            # complete (published == synced == head, zero deferred). A repo
+            # that fails again flips back to SYNC_FAILED via mark_failure.
+            # ACCESS_REVOKED is intentionally untouched (it needs re-auth).
+            if repo.status == RepositoryStatus.SYNC_FAILED.value:
+                log.info(
+                    "sync_failed_recovered github_repository_id=%d event_id=%s kind=%s -> SYNCING",
+                    repo.github_repository_id,
+                    row.event_id,
+                    kind,
+                )
+                repo.status = RepositoryStatus.SYNCING.value
+
             # ---- deferral gate (live events during synchronization) --------
             if (
                 kind == EventKind.LIVE.value
